@@ -1,0 +1,41 @@
+services:
+
+  mariadb:
+    image: mariadb:12
+
+    container_name: pos-mariadb
+
+    restart: always
+
+    environment:
+      MARIADB_ROOT_PASSWORD: mapalo
+      MARIADB_DATABASE: posdb
+      MARIADB_USER: mapalo
+      MARIADB_PASSWORD: mapalo
+
+    ports:
+      - "3307:3306"
+
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+  pos-api:
+    build: .
+
+    container_name: pos-api
+
+    restart: always
+
+    ports:
+      - "8080:8080"
+
+    depends_on:
+      - mariadb
+
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mariadb://mariadb:3306/posdb
+      SPRING_DATASOURCE_USERNAME: posuser
+      SPRING_DATASOURCE_PASSWORD: strongpassword
+
+volumes:
+  mariadb_data:
