@@ -18,24 +18,35 @@ services:
 
     volumes:
       - mariadb_data:/var/lib/mysql
+  # pos-api:
+  #   image: gradle:jdk25
 
-  pos-api:
-    build: .
+  #   container_name: pos-api
 
-    container_name: pos-api
+  #   working_dir: /app
 
-    restart: always
+  #   restart: always
 
-    ports:
-      - "8080:8080"
+  #   ports:
+  #     - "8080:8080"
 
-    depends_on:
-      - mariadb
+  #   depends_on:
+  #     - mariadb
 
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:mariadb://mariadb:3306/posdb
-      SPRING_DATASOURCE_USERNAME: posuser
-      SPRING_DATASOURCE_PASSWORD: strongpassword
+  #   environment:
+  #     SPRING_DATASOURCE_URL: jdbc:mariadb://mariadb:3306/posdb
+  #     SPRING_DATASOURCE_USERNAME: mapalo
+  #     SPRING_DATASOURCE_PASSWORD: mapalo
+
+  #   volumes:
+  #     - .:/app
+  #     - gradle_cache:/home/gradle/.gradle
+
+  #   stdin_open: true
+  #   tty: true
+
+  #   command: sh -c "./gradlew classes --continuous & ./gradlew bootRun"
 
 volumes:
   mariadb_data:
+  # gradle_cache:
