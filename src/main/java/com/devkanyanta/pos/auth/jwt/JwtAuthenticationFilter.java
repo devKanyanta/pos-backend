@@ -15,9 +15,11 @@ import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class JwtAuthenticationFilter
         extends OncePerRequestFilter {
 
@@ -55,8 +57,8 @@ public class JwtAuthenticationFilter
         if (authHeader == null
                 || !authHeader.startsWith("Bearer ")) {
 
+            log.debug("No Bearer token found in Authorization header for request: {}", request.getRequestURI());
             filterChain.doFilter(request, response);
-
             return;
         }
 
@@ -64,7 +66,9 @@ public class JwtAuthenticationFilter
 
         try {
             username = jwtService.extractUsername(jwt);
+            log.debug("Extracted username from JWT: {}", username);
         } catch (RuntimeException ex) {
+            log.warn("Failed to extract username from JWT: {}", ex.getMessage());
             filterChain.doFilter(request, response);
             return;
         }
@@ -83,6 +87,7 @@ public class JwtAuthenticationFilter
                     userDetails.getUsername()
             )) {
 
+                log.debug("JWT token is valid for user: {}", username);
                 UsernamePasswordAuthenticationToken authToken =
                         new UsernamePasswordAuthenticationToken(
                                 userDetails,
@@ -98,6 +103,8 @@ public class JwtAuthenticationFilter
                 SecurityContextHolder
                         .getContext()
                         .setAuthentication(authToken);
+            } else {
+                log.warn("JWT token is invalid for user: {}", username);
             }
         }
 
