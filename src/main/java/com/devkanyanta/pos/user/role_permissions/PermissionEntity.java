@@ -1,4 +1,4 @@
-package com.devkanyanta.pos.role_permissions;
+package com.devkanyanta.pos.user.role_permissions;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
