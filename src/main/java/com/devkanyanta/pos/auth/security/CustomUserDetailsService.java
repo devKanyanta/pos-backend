@@ -1,5 +1,7 @@
 package com.devkanyanta.pos.auth.security;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -26,14 +28,19 @@ public class CustomUserDetailsService
                 .orElseThrow(() ->
                         new UsernameNotFoundException("User not found"));
 
+        Set<SimpleGrantedAuthority> authorities = new HashSet<>();
+
+        user.getRoles().forEach(role -> {
+            authorities.add(new SimpleGrantedAuthority("ROLE_" + role.getName()));
+            role.getPermissions().forEach(permission ->
+                    authorities.add(new SimpleGrantedAuthority(permission.getName()))
+            );
+        });
+
         return new org.springframework.security.core.userdetails.User(
                 user.getUsername(),
                 user.getPassword(),
-                user.getRoles()
-                        .stream()
-                        .map(role ->
-                                new SimpleGrantedAuthority(role.getName()))
-                        .collect(Collectors.toList())
+                authorities.stream().collect(Collectors.toList())
         );
     }
 }
