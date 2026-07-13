@@ -38,6 +38,8 @@ public class ProductServiceImpl implements ProductService {
                 .costPrice(request.getCostPrice())
                 .stockQuantity(request.getStockQuantity())
                 .active(Boolean.TRUE)
+                .vatRate(request.getVatRate() != null ? request.getVatRate() : new java.math.BigDecimal("16.00"))
+                .trackInventory(request.getTrackInventory() != null ? request.getTrackInventory() : true)
                 .category(resolveCategory(request.getCategoryId()))
                 .build();
 
@@ -90,6 +92,14 @@ public class ProductServiceImpl implements ProductService {
 
         if (request.getActive() != null) {
             product.setActive(request.getActive());
+        }
+
+        if (request.getVatRate() != null) {
+            product.setVatRate(request.getVatRate());
+        }
+
+        if (request.getTrackInventory() != null) {
+            product.setTrackInventory(request.getTrackInventory());
         }
 
         if (request.getCategoryId() != null) {
@@ -150,6 +160,7 @@ public class ProductServiceImpl implements ProductService {
         validatePrice(request.getPrice());
         validateCostPrice(request.getCostPrice());
         validateStockQuantity(request.getStockQuantity());
+        validateVatRate(request.getVatRate());
     }
 
     private void validateUpdateRequest(UpdateProductRequest request) {
@@ -205,6 +216,13 @@ public class ProductServiceImpl implements ProductService {
 
         if (stockQuantity < 0) {
             throw new RuntimeException("Product stock quantity cannot be negative");
+        }
+    }
+
+    private void validateVatRate(java.math.BigDecimal vatRate) {
+
+        if (vatRate != null && vatRate.signum() < 0) {
+            throw new RuntimeException("VAT rate cannot be negative");
         }
     }
 }

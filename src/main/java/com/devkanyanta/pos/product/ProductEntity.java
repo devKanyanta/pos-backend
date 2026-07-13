@@ -36,6 +36,13 @@ public class ProductEntity extends BaseEntity {
     @Column(precision = 19, scale = 2)
     private BigDecimal costPrice;
 
+    @Column(precision = 5, scale = 2)
+    @Builder.Default
+    private BigDecimal vatRate = new BigDecimal("16.00");
+
+    @Builder.Default
+    private Boolean trackInventory = true;
+
     @Column(nullable = false)
     private Integer stockQuantity;
 

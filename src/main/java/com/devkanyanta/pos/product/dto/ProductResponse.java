@@ -25,6 +25,10 @@ public class ProductResponse {
 
     private Boolean active;
 
+    private BigDecimal vatRate;
+
+    private Boolean trackInventory;
+
     private Long categoryId;
 
     private String categoryName;

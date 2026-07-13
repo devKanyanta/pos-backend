@@ -22,6 +22,8 @@ public class ProductMapper {
                 .costPrice(product.getCostPrice())
                 .stockQuantity(product.getStockQuantity())
                 .active(product.getActive())
+                .vatRate(product.getVatRate())
+                .trackInventory(product.getTrackInventory())
                 .categoryId(category != null ? category.getId() : null)
                 .categoryName(category != null ? category.getName() : null)
                 .build();

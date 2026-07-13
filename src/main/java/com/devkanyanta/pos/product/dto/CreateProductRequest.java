@@ -21,5 +21,9 @@ public class CreateProductRequest {
 
     private Integer stockQuantity;
 
+    private BigDecimal vatRate;
+
+    private Boolean trackInventory;
+
     private Long categoryId;
 }

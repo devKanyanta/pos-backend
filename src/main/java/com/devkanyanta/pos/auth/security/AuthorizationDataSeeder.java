@@ -30,7 +30,33 @@ public class AuthorizationDataSeeder {
                     PermissionConstants.CATEGORY_VIEW,
                     PermissionConstants.CATEGORY_CREATE,
                     PermissionConstants.CATEGORY_UPDATE,
-                    PermissionConstants.CATEGORY_DELETE
+                    PermissionConstants.CATEGORY_DELETE,
+                    PermissionConstants.USER_VIEW,
+                    PermissionConstants.USER_CREATE,
+                    PermissionConstants.USER_UPDATE,
+                    PermissionConstants.USER_DELETE,
+                    PermissionConstants.BRANCH_VIEW,
+                    PermissionConstants.BRANCH_CREATE,
+                    PermissionConstants.BRANCH_UPDATE,
+                    PermissionConstants.BRANCH_DELETE,
+                    PermissionConstants.CUSTOMER_VIEW,
+                    PermissionConstants.CUSTOMER_CREATE,
+                    PermissionConstants.CUSTOMER_UPDATE,
+                    PermissionConstants.CUSTOMER_DELETE,
+                    PermissionConstants.INVENTORY_VIEW,
+                    PermissionConstants.INVENTORY_ADJUST,
+                    PermissionConstants.SALE_VIEW,
+                    PermissionConstants.SALE_CREATE,
+                    PermissionConstants.SALE_VOID,
+                    PermissionConstants.SALE_REFUND,
+                    PermissionConstants.PAYMENT_METHOD_VIEW,
+                    PermissionConstants.PAYMENT_METHOD_CREATE,
+                    PermissionConstants.PAYMENT_METHOD_UPDATE,
+                    PermissionConstants.PAYMENT_METHOD_DELETE,
+                    PermissionConstants.RECEIPT_VIEW,
+                    PermissionConstants.RECEIPT_REPRINT,
+                    PermissionConstants.ZRA_VIEW,
+                    PermissionConstants.REPORT_VIEW
             );
 
             permissionNames.forEach(permissionName -> permissionRepository.findByName(permissionName)
@@ -44,23 +70,56 @@ public class AuthorizationDataSeeder {
             RoleEntity managerRole = getOrCreateRole(roleRepository, "MANAGER");
             RoleEntity cashierRole = getOrCreateRole(roleRepository, "CASHIER");
 
+            // ADMIN gets all permissions
             assignPermissions(adminRole, permissionNames, permissionRepository, roleRepository);
+
+            // MANAGER gets most permissions except delete for critical entities, and not payment method management
             assignPermissions(
                     managerRole,
                     List.of(
                             PermissionConstants.PRODUCT_VIEW,
                             PermissionConstants.PRODUCT_CREATE,
                             PermissionConstants.PRODUCT_UPDATE,
-                            PermissionConstants.CATEGORY_VIEW
+                            PermissionConstants.CATEGORY_VIEW,
+                            PermissionConstants.CATEGORY_CREATE,
+                            PermissionConstants.CATEGORY_UPDATE,
+                            PermissionConstants.USER_VIEW,
+                            PermissionConstants.BRANCH_VIEW,
+                            PermissionConstants.BRANCH_CREATE,
+                            PermissionConstants.BRANCH_UPDATE,
+                            PermissionConstants.CUSTOMER_VIEW,
+                            PermissionConstants.CUSTOMER_CREATE,
+                            PermissionConstants.CUSTOMER_UPDATE,
+                            PermissionConstants.INVENTORY_VIEW,
+                            PermissionConstants.INVENTORY_ADJUST,
+                            PermissionConstants.SALE_VIEW,
+                            PermissionConstants.SALE_CREATE,
+                            PermissionConstants.SALE_VOID,
+                            PermissionConstants.SALE_REFUND,
+                            PermissionConstants.RECEIPT_VIEW,
+                            PermissionConstants.RECEIPT_REPRINT,
+                            PermissionConstants.REPORT_VIEW,
+                            PermissionConstants.PAYMENT_METHOD_VIEW
                     ),
                     permissionRepository,
                     roleRepository
             );
+
+            // CASHIER gets view/create permissions only
             assignPermissions(
                     cashierRole,
                     List.of(
                             PermissionConstants.PRODUCT_VIEW,
-                            PermissionConstants.CATEGORY_VIEW
+                            PermissionConstants.CATEGORY_VIEW,
+                            PermissionConstants.CUSTOMER_VIEW,
+                            PermissionConstants.CUSTOMER_CREATE,
+                            PermissionConstants.CUSTOMER_UPDATE,
+                            PermissionConstants.SALE_VIEW,
+                            PermissionConstants.SALE_CREATE,
+                            PermissionConstants.RECEIPT_VIEW,
+                            PermissionConstants.RECEIPT_REPRINT,
+                            PermissionConstants.INVENTORY_VIEW,
+                            PermissionConstants.PAYMENT_METHOD_VIEW
                     ),
                     permissionRepository,
                     roleRepository

@@ -28,5 +28,6 @@ public class CategoryEntity extends BaseEntity {
     private String description;
 
     @OneToMany(mappedBy = "category")
+    @Builder.Default
     private List<ProductEntity> products = new ArrayList<>();
 }

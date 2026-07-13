@@ -23,5 +23,9 @@ public class UpdateProductRequest {
 
     private Boolean active;
 
+    private BigDecimal vatRate;
+
+    private Boolean trackInventory;
+
     private Long categoryId;
 }
