@@ -27,6 +27,22 @@ public class SaleNumberGenerator {
         return generateNumber("CRN");
     }
 
+    public String generatePurchaseOrderNumber() {
+        return generateNumber("PO");
+    }
+
+    public String generateGoodsReceiptNumber() {
+        return generateNumber("GRN");
+    }
+
+    public String generateSupplierReturnNumber() {
+        return generateNumber("SRN");
+    }
+
+    public String generateStockCountNumber() {
+        return generateNumber("CNT");
+    }
+
     private String generateNumber(String prefix) {
 
         String datePart = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));

@@ -81,6 +81,22 @@ public final class PermissionConstants {
     // WhatsApp messaging (send receipts / reports through the provider)
     public static final String WHATSAPP_SEND = "WHATSAPP_SEND";
 
+    // Prices and purchase costs
+    public static final String PRODUCT_PRICE_UPDATE = "PRODUCT_PRICE_UPDATE";
+
+    // Units of measurement
+    public static final String UNIT_MANAGE = "UNIT_MANAGE";
+
+    // Suppliers and purchasing
+    public static final String SUPPLIER_VIEW = "SUPPLIER_VIEW";
+    public static final String SUPPLIER_MANAGE = "SUPPLIER_MANAGE";
+    public static final String PURCHASE_VIEW = "PURCHASE_VIEW";
+    public static final String PURCHASE_MANAGE = "PURCHASE_MANAGE";
+    public static final String PURCHASE_RECEIVE = "PURCHASE_RECEIVE";
+
+    // Physical stock counts
+    public static final String STOCK_COUNT_MANAGE = "STOCK_COUNT_MANAGE";
+
     private PermissionConstants() {
     }
 }

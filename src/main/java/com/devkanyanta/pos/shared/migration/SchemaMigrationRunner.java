@@ -100,7 +100,40 @@ public class SchemaMigrationRunner implements ApplicationRunner {
                 "UPDATE zra_submissions SET next_attempt_at = created_at WHERE next_attempt_at IS NULL"
         ));
 
+        migrations.put("2026.10.07-inventory-costing", List.of(
+                // Weighted-average cost starts from the last known purchase cost.
+                "UPDATE products SET average_cost = COALESCE(cost_price, 0) WHERE average_cost IS NULL",
+                // Historical sale lines have no cost snapshot; the current purchase cost is the best estimate.
+                "UPDATE sale_items si SET unit_cost = COALESCE(p.cost_price, 0) FROM products p "
+                        + "WHERE si.product_id = p.id AND si.unit_cost IS NULL",
+                // Running balance for old ledger rows (assumes the ledger started from zero, as it always has).
+                "UPDATE inventory_movements m SET balance_after = x.running FROM ("
+                        + "SELECT id, SUM(quantity) OVER (PARTITION BY product_id ORDER BY created_at, id) AS running "
+                        + "FROM inventory_movements) x WHERE m.id = x.id AND m.balance_after IS NULL"
+        ));
+        migrations.put("2026.10.08-inventory-constraints", List.of(
+                addCheck("purchase_order_lines", "chk_po_line_quantities",
+                        "ordered_quantity > 0 AND received_quantity >= 0 AND received_quantity <= ordered_quantity "
+                                + "AND returned_quantity >= 0 AND returned_quantity <= received_quantity"),
+                addCheck("goods_receipt_lines", "chk_grn_line_quantity", "quantity > 0"),
+                addCheck("supplier_return_lines", "chk_srn_line_quantity", "quantity > 0"),
+                addCheck("stock_count_lines", "chk_count_line_quantities",
+                        "expected_quantity >= 0 AND (counted_quantity IS NULL OR counted_quantity >= 0)"),
+                addCheck("inventory_movements", "chk_movement_quantity", "quantity <> 0")
+        ));
+        migrations.put("2026.10.24-movement-type-check", List.of(
+                // Hibernate generated this CHECK from the enum when the table was first created and never
+                // refreshes it, so newer types (e.g. OPENING) are rejected. The enum is the source of truth.
+                "ALTER TABLE inventory_movements DROP CONSTRAINT IF EXISTS inventory_movements_movement_type_check"
+        ));
         return migrations;
+    }
+
+    /** Idempotent ADD CONSTRAINT ... CHECK. Added NOT VALID so rows from before the rule never block startup. */
+    private static String addCheck(String table, String name, String condition) {
+        return "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '" + name + "') THEN "
+                + "ALTER TABLE " + table + " ADD CONSTRAINT " + name + " CHECK (" + condition + ") NOT VALID; "
+                + "END IF; END $$";
     }
 
     private void applyOnce(String version, List<String> statements) {

@@ -13,7 +13,10 @@ import com.devkanyanta.pos.shared.exception.BadRequestException;
 import com.devkanyanta.pos.shared.exception.ConflictException;
 import com.devkanyanta.pos.shared.exception.NotFoundException;
 import com.devkanyanta.pos.shared.util.Barcodes;
+import com.devkanyanta.pos.shared.util.Money;
 import com.devkanyanta.pos.shared.util.Texts;
+import com.devkanyanta.pos.unit.UnitEntity;
+import com.devkanyanta.pos.unit.UnitRepository;
 import com.devkanyanta.pos.zra.ZraTaxType;
 
 import lombok.RequiredArgsConstructor;
@@ -33,6 +36,8 @@ public class ProductRules {
     private final PosProperties properties;
 
     private final ProductBarcodeLookup barcodeLookup;
+
+    private final UnitRepository unitRepository;
 
     /** Builds a new (unsaved) product from a create request, validating every field. */
     public ProductEntity buildNew(CreateProductRequest request) {
@@ -71,6 +76,9 @@ public class ProductRules {
 
         ProductEntity product = ProductEntity.builder()
                 .name(name)
+                .description(Texts.truncate(Texts.clean(request.getDescription()), 1000))
+                .unit(resolveUnit(request.getUnitId()))
+                .averageCost(Money.nz(request.getCostPrice()).setScale(4, java.math.RoundingMode.HALF_UP))
                 .barcode(barcode)
                 .sku(sku)
                 .price(request.getPrice())
@@ -136,9 +144,21 @@ public class ProductRules {
             zraRelevantChange |= product.getPrice() == null || product.getPrice().compareTo(request.getPrice()) != 0;
             product.setPrice(request.getPrice());
         }
+        if (request.getDescription() != null) {
+            product.setDescription(Texts.truncate(Texts.clean(request.getDescription()), 1000));
+        }
+
+        if (request.getUnitId() != null) {
+            product.setUnit(resolveUnit(request.getUnitId()));
+        }
+
         if (request.getCostPrice() != null) {
             validateCostPrice(request.getCostPrice());
             product.setCostPrice(request.getCostPrice());
+            // With nothing on hand there is no average to protect: the new cost becomes the average.
+            if (product.getStockQuantity() == null || product.getStockQuantity() <= 0) {
+                product.setAverageCost(request.getCostPrice().setScale(4, java.math.RoundingMode.HALF_UP));
+            }
         }
 
         if (request.getTrackInventory() != null) {
@@ -187,6 +207,16 @@ public class ProductRules {
             // The VSDC copy of the item is now stale and must be registered again.
             product.setZraRegistered(false);
         }
+    }
+
+    public UnitEntity resolveUnit(Long unitId) {
+
+        if (unitId == null) {
+            return null;
+        }
+
+        return unitRepository.findById(unitId)
+                .orElseThrow(() -> new NotFoundException("Unit not found"));
     }
 
     public CategoryEntity resolveCategory(Long categoryId) {

@@ -13,7 +13,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "sales")
+@Table(name = "sales", indexes = @jakarta.persistence.Index(name = "idx_sale_sold_at", columnList = "sold_at"))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -92,6 +92,14 @@ public class SaleEntity extends BaseEntity {
     /** Comma-separated conflict codes recorded during offline sync. */
     @Column(length = 500)
     private String syncConflicts;
+
+    /** Set when an unpaid sale is voided (stock is restored at the original cost). */
+    @Column(length = 500)
+    private String voidReason;
+
+    private String voidedBy;
+
+    private LocalDateTime voidedAt;
 
     private String reviewedBy;
 

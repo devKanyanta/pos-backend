@@ -29,8 +29,15 @@ reconciliation, and WhatsApp receipt sharing.
   `GET /products/by-barcode`, and sales that can ring items up by `barcode`. See
   [docs/api-documentation.md](docs/api-documentation.md#barcodes); the mobile app is in `../kantemba`.
 - **Receipts** – numbered receipts with plain-text (thermal printer), PDF and WhatsApp output.
-- **Catalogue and stock** – products, categories, barcodes/SKUs, reorder levels, a full inventory
-  movement ledger (sales, restocks, adjustments, returns), low-stock alerts and CSV bulk import.
+- **Catalogue and stock** – products (units, descriptions, archive/restore, price-change history),
+  categories, barcodes/SKUs, reorder levels, filtered/paginated product search and CSV bulk import.
+- **Inventory ledger and costing** – every stock change is an immutable ledger movement with a running
+  balance and unit cost; no negative stock online; weighted-average costing with exact cost of goods sold;
+  stock counts, adjustments with reasons, and idempotent operations.
+- **Purchasing** – suppliers, purchase orders, partial goods receipts (duplicate-safe), supplier returns,
+  and damaged vs saleable customer returns.
+- **Inventory reports** – stock levels, movement history, valuation, COGS and margin, fast/slow movers,
+  adjustments, purchases and sales depletion. See [docs/api-documentation.md](docs/api-documentation.md#inventory-and-the-stock-ledger).
 - **ZRA Smart Invoice** – invoices and credit notes queued in an outbox and transmitted to the VSDC
   with exponential-backoff retries; item registration; per-product ZRA mapping.
 - **Offline-first sync** – devices upload sales captured offline (idempotent per `clientSaleId`),
@@ -327,6 +334,9 @@ stand-in for the ZRA VSDC, so they never touch your development data or the real
 | `OfflineSyncIntegrationTest` | Device registration, offline upload, idempotency, conflicts |
 | `ReconciliationIntegrationTest` | Cash-up, Z-report |
 | `SecurityPlanSupportIntegrationTest` | Authorization, plan restrictions, support/WhatsApp |
+| `InventoryIntegrationTest` | Ledger balances, weighted-average cost and COGS, adjustments, voids, damaged returns, concurrent sales, product search/archive/units, price permissions, role checks, migration |
+| `PurchasingIntegrationTest` | Purchase orders, partial and duplicate receipts, supplier returns, stock counts |
+| `InventoryReportsIntegrationTest` | COGS, movers, depletion, adjustment and purchase reports, plan gating |
 | `BarcodeIntegrationTest` | Barcode create/update, duplicates, lookup, sales by barcode, atomic checkout, idempotency, permissions, data migration |
 | `BarcodesTest` | Barcode normalisation and validation rules |
 | `PosApplicationTests` | Application context loads |

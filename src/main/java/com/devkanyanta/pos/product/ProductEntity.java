@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 
 import com.devkanyanta.pos.category.CategoryEntity;
 import com.devkanyanta.pos.shared.BaseEntity;
+import com.devkanyanta.pos.unit.UnitEntity;
 import com.devkanyanta.pos.zra.ZraTaxType;
 
 import jakarta.persistence.*;
@@ -32,11 +33,26 @@ public class ProductEntity extends BaseEntity {
     @Column(unique = true)
     private String sku;
 
+    @Column(length = 1000)
+    private String description;
+
+    @ManyToOne
+    @JoinColumn(name = "unit_id")
+    private UnitEntity unit;
+
     @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal price;
 
+    /** Latest purchase cost (what the last receipt paid). Not used for valuation; see {@link #averageCost}. */
     @Column(precision = 19, scale = 2)
     private BigDecimal costPrice;
+
+    /**
+     * Weighted-average cost of the stock on hand. Maintained only by the stock ledger and used for inventory
+     * valuation and the cost of goods sold.
+     */
+    @Column(precision = 19, scale = 4)
+    private BigDecimal averageCost;
 
     @Column(precision = 5, scale = 2)
     @Builder.Default

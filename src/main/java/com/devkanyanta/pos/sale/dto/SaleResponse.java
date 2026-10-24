@@ -63,6 +63,13 @@ public class SaleResponse {
 
     private Boolean needsReview;
 
+    /** Set when the sale was voided: why, by whom and when. */
+    private String voidReason;
+
+    private String voidedBy;
+
+    private LocalDateTime voidedAt;
+
     private List<String> syncConflicts;
 
     private Long receiptId;

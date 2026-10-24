@@ -65,7 +65,15 @@ public class AuthorizationDataSeeder {
                     PermissionConstants.RECONCILIATION_MANAGE,
                     PermissionConstants.MERCHANT_MANAGE,
                     PermissionConstants.SUPPORT_MANAGE,
-                    PermissionConstants.WHATSAPP_SEND
+                    PermissionConstants.WHATSAPP_SEND,
+                    PermissionConstants.PRODUCT_PRICE_UPDATE,
+                    PermissionConstants.UNIT_MANAGE,
+                    PermissionConstants.SUPPLIER_VIEW,
+                    PermissionConstants.SUPPLIER_MANAGE,
+                    PermissionConstants.PURCHASE_VIEW,
+                    PermissionConstants.PURCHASE_MANAGE,
+                    PermissionConstants.PURCHASE_RECEIVE,
+                    PermissionConstants.STOCK_COUNT_MANAGE
             );
 
             permissionNames.forEach(permissionName -> permissionRepository.findByName(permissionName)
@@ -115,7 +123,15 @@ public class AuthorizationDataSeeder {
                             PermissionConstants.DEVICE_MANAGE,
                             PermissionConstants.RECONCILIATION_VIEW,
                             PermissionConstants.RECONCILIATION_MANAGE,
-                            PermissionConstants.WHATSAPP_SEND
+                            PermissionConstants.WHATSAPP_SEND,
+                            PermissionConstants.PRODUCT_PRICE_UPDATE,
+                            PermissionConstants.UNIT_MANAGE,
+                            PermissionConstants.SUPPLIER_VIEW,
+                            PermissionConstants.SUPPLIER_MANAGE,
+                            PermissionConstants.PURCHASE_VIEW,
+                            PermissionConstants.PURCHASE_MANAGE,
+                            PermissionConstants.PURCHASE_RECEIVE,
+                            PermissionConstants.STOCK_COUNT_MANAGE
                     ),
                     permissionRepository,
                     roleRepository

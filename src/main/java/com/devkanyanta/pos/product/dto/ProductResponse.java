@@ -14,13 +14,23 @@ public class ProductResponse {
 
     private String name;
 
+    private String description;
+
+    private Long unitId;
+
+    private String unitCode;
+
     private String barcode;
 
     private String sku;
 
     private BigDecimal price;
 
+    /** Latest purchase cost. */
     private BigDecimal costPrice;
+
+    /** Weighted-average cost of stock on hand (used for valuation and cost of goods sold). */
+    private BigDecimal averageCost;
 
     private Integer stockQuantity;
 

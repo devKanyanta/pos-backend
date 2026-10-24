@@ -7,7 +7,8 @@ REST API for the POS backend (Spring Boot). All endpoints are JSON unless stated
 - [Error format](#error-format)
 - [Endpoints](#endpoints)
   - [Health](#health) · [Auth](#auth) · [Users](#users) · [Branches](#branches) · [Merchant profile](#merchant-profile)
-  - [Categories](#categories) · [Products](#products) · [Barcodes](#barcodes) · [Inventory movements](#inventory-movements)
+  - [Categories](#categories) · [Products](#products) · [Barcodes](#barcodes)
+  - [Inventory & stock ledger](#inventory-and-the-stock-ledger) · [Units](#units-of-measurement) · [Suppliers](#suppliers) · [Purchase orders](#purchase-orders) · [Goods receipts](#goods-receipts) · [Supplier returns](#supplier-returns) · [Stock counts](#stock-counts) · [Inventory reports](#inventory-reports)
   - [Customers](#customers) · [Payment methods](#payment-methods)
   - [Sales](#sales) · [Payments](#payments) · [Receipts](#receipts)
   - [Dashboard](#dashboard) · [Reports & Z-report](#reports--z-report) · [Reconciliations](#reconciliations)
@@ -202,6 +203,10 @@ Response: `AuthResponse` (as above). Errors: `400` missing fields, `401` invalid
 | `GET /api/v1/products` | `PRODUCT_VIEW` | List |
 | `GET /api/v1/products/{id}` | `PRODUCT_VIEW` | Get |
 | `GET /api/v1/products/by-barcode?barcode=` | `PRODUCT_VIEW` | Find a product by its barcode – see [Barcodes](#barcodes) |
+| `GET /api/v1/products/search` | `PRODUCT_VIEW` | Filtered, sorted, **paginated** list (see below). `GET /products` still returns everything |
+| `POST /api/v1/products/{id}/archive` | `PRODUCT_UPDATE` | Take out of sale (`active = false`); history is kept |
+| `POST /api/v1/products/{id}/restore` | `PRODUCT_UPDATE` | Put back on sale |
+| `GET /api/v1/products/{id}/price-history` | `PRODUCT_VIEW` | Who changed the price/cost, when, from what to what |
 | `PUT /api/v1/products/{id}` | `PRODUCT_UPDATE` | Update |
 | `DELETE /api/v1/products/{id}` | `PRODUCT_DELETE` | Delete → `204` |
 | `GET /api/v1/products/low-stock` | `PRODUCT_VIEW` | Products at or below their reorder level |
@@ -213,9 +218,11 @@ Response: `AuthResponse` (as above). Errors: `400` missing fields, `401` invalid
 | Field | Type | Notes |
 |---|---|---|
 | `name`, `sku` | string | |
+| `description` | string | up to 1000 characters |
+| `unitId` | long | unit of measurement, see [Units](#units-of-measurement) |
 | `barcode` | string | optional, unique, normalised and validated – see [Barcodes](#barcodes). On update: omit to keep, `""` to clear |
 | `price` | decimal | VAT-exclusive selling price |
-| `costPrice` | decimal | |
+| `costPrice` | decimal | latest purchase cost; kept separate from `price`. Receipts update it |
 | `stockQuantity` | integer | |
 | `vatRate` | decimal | e.g. `16.00` |
 | `trackInventory` | boolean | |
@@ -226,7 +233,30 @@ Response: `AuthResponse` (as above). Errors: `400` missing fields, `401` invalid
 | `zraItemTypeCode` | string | `1` raw material, `2` finished product, `3` service |
 | `zraOriginCountryCode`, `zraPackagingUnitCode`, `zraQuantityUnitCode` | string | |
 
-**ProductResponse:** `id`, `name`, `barcode`, `sku`, `price`, `costPrice`, `stockQuantity`, `active`, `vatRate`, `trackInventory`, `categoryId`, `categoryName`, `reorderLevel`, `lowStock`, the `zra*` fields above, `zraMapped` (all ZRA fields present), `zraRegistered`, `updatedAt`.
+**ProductResponse:** `id`, `name`, `description`, `unitId`, `unitCode`, `averageCost` (weighted-average cost of stock on hand), `barcode`, `sku`, `price`, `costPrice`, `stockQuantity`, `active`, `vatRate`, `trackInventory`, `categoryId`, `categoryName`, `reorderLevel`, `lowStock`, the `zra*` fields above, `zraMapped` (all ZRA fields present), `zraRegistered`, `updatedAt`.
+
+**Product rules**
+
+* SKU and barcode are unique (409 with the owning product named); both optional. Prices and costs cannot be negative.
+* **Prices and stock are protected.** Changing `price` or `costPrice` through `PUT /products/{id}` needs `PRODUCT_PRICE_UPDATE`,
+  and changing `stockQuantity` needs `INVENTORY_ADJUST` (`403` otherwise). A stock change made this way is still written to
+  the ledger as an `ADJUSTMENT`. Every price/cost change is kept in the price history with the user and time.
+* **Opening stock** on create or CSV import is recorded as an `OPENING` movement valued at `costPrice`
+  (earlier versions used `RESTOCK`; existing rows are unchanged).
+* **Deleting:** `DELETE /products/{id}` removes a product nothing refers to. A product that appears in a sale line, the
+  stock ledger, a purchase order or a stock count is **archived instead** (`active = false`, still `204`), so history
+  stays intact. An archived product cannot be sold or ordered.
+
+#### `GET /api/v1/products/search`
+
+Filters: `q` (name, SKU, barcode or description contains, case-insensitive), `categoryId`, `unitId`, `active`,
+`trackInventory`, `lowStock`, `outOfStock`, `hasBarcode`, `minPrice`, `maxPrice`. Sort: `name` (default), `sku`, `price`,
+`costPrice`, `stockQuantity`, `createdAt`, `updatedAt`. Pagination as described under
+[Pagination](#pagination-filtering-and-sorting-all-paginated-endpoints).
+
+```
+GET /api/v1/products/search?q=milk&categoryId=3&lowStock=true&sort=stockQuantity,asc&page=0&size=20
+```
 
 #### CSV import – `POST /api/v1/products/import`
 Query: `dryRun` (boolean, default `false`) – validate without saving.
@@ -318,19 +348,277 @@ the canonical form. It never deletes data: blank values become `NULL`; a value t
 collide with another product once normalised, is left untouched and logged as a warning for a person to fix.
 Products without a barcode are unaffected.
 
-### Inventory movements
+### Inventory and the stock ledger
+
+Stock is kept per product (whole units, single location). `products.stockQuantity` is the current balance and the
+**stock ledger** (`inventory_movements`) is its audit trail. Every change to a balance goes through one component
+(`StockLedger`) that writes an immutable movement in the same transaction, so a balance can always be explained by
+its movements and cannot change without one.
+
+Each movement records the product, the signed `quantity`, its `movementType`, the `unitCost` it was valued at, the
+`balanceAfter`, who did it (`performedBy`), when (`createdAt`), a `reason`/`notes`, and the document it came from
+(`referenceType` + `referenceId`).
+
+| `movementType` | Sign | Created by | Valued at |
+|---|---|---|---|
+| `OPENING` | + | Product creation or CSV import with opening stock | The product's cost price |
+| `PURCHASE_RECEIPT` | + | A goods receipt against a purchase order | The delivery's unit cost (re-averages) |
+| `RESTOCK` | + | `POST /inventory-movements/restock` (receiving without a purchase order); also older rows | The unit cost sent, else the average |
+| `SALE` | − | A sale | The average cost at the time of sale |
+| `SALE_VOID` | + | Voiding an unpaid sale | The cost the goods left at |
+| `RETURN` | + | A customer return (refund) of saleable goods; also older rows | The cost the goods left at |
+| `SUPPLIER_RETURN` | − | A supplier return | The average cost |
+| `ADJUSTMENT` | ± | Manual adjustment, product edit of `stockQuantity`, CSV re-import, damaged customer returns, and void rows from older versions | The average cost |
+| `COUNT` | ± | Committing a physical stock count | The average cost |
+| `TRANSFER` | – | Not used (single location); kept so old data stays readable | – |
+
+**Rules**
+
+1. **No untracked stock changes.** Products with `trackInventory = false` have no ledger and no balance rules.
+2. **No negative stock.** Any operation that would take a balance below zero is refused with `400 Insufficient stock …`
+   and changes nothing. The only exception is an **offline-synced sale** (the goods already left the shop): it is
+   accepted, the balance may go negative, and the sale is flagged `NEGATIVE_STOCK` for review.
+3. **Atomic and serialised.** Product rows are locked (in id order) while a balance changes, so concurrent sales,
+   receipts and adjustments cannot lose updates or oversell. A multi-line operation either happens entirely or not at all.
+4. **Idempotent where it matters** (see below).
+5. **Only goods actually received add purchased stock.** Creating or placing a purchase order changes no balance.
+
+**Sales and stock.** A sale is a committed transaction as soon as it is created: stock is deducted in the same database
+transaction as the sale and any payments sent with it (`POST /sales` with `payments`). If anything fails, nothing is
+saved. A sale created without full payment (credit sale) also holds its stock. A sale **with no payments** can be
+**voided** (`POST /sales/{id}/void`, optional `{"reason"}`): stock returns at the original cost and the sale records
+`voidReason`, `voidedBy`, `voidedAt`. A sale **with payments** is reversed with a **refund**. Repeating a sale request
+with the same `clientSaleId` returns the existing sale and deducts nothing again.
+
+**Customer returns.** `POST /sales/{id}/refund` returns refunded goods to stock as `RETURN` movements at their original
+cost. Goods that come back damaged must not return to the shelf: mark them `"condition": "DAMAGED"` on a refund line
+(or list the item in `damagedSaleItemIds`). They are taken back and written off immediately, leaving two auditable
+movements: `RETURN +n` and `ADJUSTMENT −n` with reason `DAMAGED_RETURN`.
+
+**Idempotency keys**
+
+| Operation | Key | If repeated |
+|---|---|---|
+| Sale | `clientSaleId` (optional, 8–64 chars) | Returns the existing sale |
+| Goods receipt | `requestId` (**required**, 8–64 chars) | Returns the original receipt; stock is added once. Reusing it for another order → `409` |
+| Supplier return | `requestId` (**required**) | Returns the original return |
+| Manual adjustment / restock | `requestId` (optional) | Returns the original movement. Reusing it for another product/operation → `409` |
+| Stock count commit, void, order transitions | State machine | A second attempt → `409` / `400` and nothing changes |
+
+Allowed characters for keys: letters, digits, `. _ : -`.
+
+#### Valuation: weighted-average cost
+
+Inventory is valued at **weighted-average cost**, kept on each product as `averageCost` (4 decimals).
+
+* **Stock in with a cost** (receipt, restock, opening stock, customer return at original cost):
+  `newAverage = (onHand × average + qty × cost) / (onHand + qty)`. A zero or negative balance counts as zero.
+* **Stock out** (sale, supplier return, adjustment, count): valued at the current average, which it does **not** change.
+* **Stock in without a cost** (positive adjustment/count): valued at the current average.
+* `costPrice` is the **latest purchase cost** (what the last receipt paid). It is kept separate from `price` (selling
+  price) and from `averageCost`. Changing `costPrice` by hand while nothing is on hand also sets the average;
+  with stock on hand the average is left alone.
+* **Cost of goods sold**: each sale line stores the average cost at the moment of sale (`sale_items.unit_cost`), so
+  later purchases never rewrite history. A refunded unit is taken out of both revenue and cost.
+* Prices, VAT, discounts and totals are always calculated by the server (the existing sale calculator); clients cannot
+  supply costs, totals or balances.
+
+Example: 10 on hand at 5.00; receive 10 at 8.00 → average 6.50. Sell 4 (cost 26.00, average stays 6.50). Receive 4 at
+10.00 → (16 × 6.50 + 4 × 10) / 20 = 7.20. Stock value now 20 × 7.20 = 144.00; the earlier sale's cost stays 26.00.
+
+#### Manual adjustments and restocks
 
 | Method & path | Permission | Description |
 |---|---|---|
-| `GET /api/v1/inventory-movements` | `INVENTORY_VIEW` | All stock movements |
-| `GET /api/v1/inventory-movements/product/{productId}` | `INVENTORY_VIEW` | Movements for one product |
-| `POST /api/v1/inventory-movements/adjustment` | `INVENTORY_ADJUST` | Manual stock correction → `201` |
-| `POST /api/v1/inventory-movements/restock` | `INVENTORY_ADJUST` | Receive stock → `201` |
+| `GET /api/v1/inventory-movements` | `INVENTORY_VIEW` | All movements (unpaginated; prefer `/inventory/movements`) |
+| `GET /api/v1/inventory-movements/product/{productId}` | `INVENTORY_VIEW` | Movements of one product, newest first |
+| `POST /api/v1/inventory-movements/adjustment` | `INVENTORY_ADJUST` | Correct stock: damaged, expired, lost, found … → `201` |
+| `POST /api/v1/inventory-movements/restock` | `INVENTORY_ADJUST` | Receive stock without a purchase order → `201` |
 
-**AdjustmentRequest:** `productId`, `quantity` (signed, non-zero; must not make stock negative), `reason` (required). Product must track inventory.
-**RestockRequest:** `productId`, `quantity` (positive), `unitCost` (optional, ≥ 0, updates the product cost price), `notes`.
+**AdjustmentRequest:** `productId`, `quantity` (signed, non-zero; may not make stock negative), `reason` (required free
+text), `reasonCode` (`DAMAGED`, `EXPIRED`, `LOST`, `FOUND`, `CORRECTION` (default) or `OTHER`), `requestId` (optional).
+**RestockRequest:** `productId`, `quantity` (positive), `unitCost` (optional, ≥ 0: re-averages the cost and becomes the
+latest purchase cost), `notes`, `requestId` (optional). For receiving against an order use [goods receipts](#goods-receipts).
 
-**InventoryMovementResponse:** `id`, `productId`, `productName`, `movementType` (`SALE`, `RESTOCK`, `ADJUSTMENT`, `RETURN`, `TRANSFER`), `quantity`, `referenceId`, `referenceType`, `notes`, `performedBy`, `createdAt`.
+**InventoryMovementResponse:** `id`, `productId`, `productName`, `movementType`, `quantity`, `unitCost`, `value`
+(quantity × unitCost), `balanceAfter`, `reason`, `referenceType`, `referenceId`, `notes`, `requestId`, `performedBy`,
+`createdAt`. (`unitCost`, `value` and `balanceAfter` are null on rows written before costing was introduced and not
+backfilled; the migration backfills balances.)
+
+```json
+{ "productId": 12, "quantity": -3, "reason": "Dropped a carton", "reasonCode": "DAMAGED", "requestId": "adj-2026-10-24-0001" }
+```
+
+#### Stock levels and movement history
+
+| Method & path | Permission | Description |
+|---|---|---|
+| `GET /api/v1/inventory/stock` | `INVENTORY_VIEW` | Stock position of inventory-tracked products (paginated) |
+| `GET /api/v1/inventory/stock/summary` | `INVENTORY_VIEW` | Counts and totals: in stock, low, out of stock, stock value |
+| `GET /api/v1/inventory/movements` | `INVENTORY_VIEW` | Filtered, paginated movement history |
+
+`/inventory/stock` filters: `q` (name, SKU, barcode, description), `categoryId`, `status` (`IN_STOCK`, `LOW_STOCK` = above 0
+and at or below the reorder level, `OUT_OF_STOCK` = 0 or less), `active`. Sort: `name`, `sku`, `stockQuantity`,
+`averageCost`, `price`, `updatedAt`. Each item: `productId`, `name`, `sku`, `barcode`, `categoryId`, `categoryName`,
+`unitCode`, `active`, `stockQuantity`, `reorderLevel` (the effective threshold: the product's own, else
+`pos.low-stock-threshold`), `status`, `negative`, `averageCost`, `stockValue`, `price`, `retailValue`.
+Reorder levels are configured per product with `reorderLevel` on create/update.
+
+`/inventory/movements` filters: `productId`, `type`, `reason`, `referenceType`, `performedBy`, `from`, `to` (dates,
+inclusive), `sort` (`createdAt`, `quantity`; default newest first), `page`, `size`.
+
+#### Pagination, filtering and sorting (all paginated endpoints)
+
+Query: `page` (from 0, default 0), `size` (1–200, default 20), `sort=field` or `sort=field,desc`. Only the documented
+sort fields are accepted (`400` otherwise). Response:
+
+```json
+{ "content": [ … ], "page": 0, "size": 20, "totalElements": 134, "totalPages": 7 }
+```
+
+Dates are `yyyy-MM-dd`; `from`/`to` are inclusive and `from` may not be after `to`.
+
+### Units of measurement
+
+Quantities are whole numbers of the product's unit. Defaults seeded at first start: `PCS KG G L ML BOX PACK BAG DOZ`.
+
+| Method & path | Permission | Description |
+|---|---|---|
+| `GET /api/v1/units` | `PRODUCT_VIEW` | List units |
+| `POST /api/v1/units` | `UNIT_MANAGE` | `{ "code": "CRATE", "name": "Crate" }` (code: 1–10 letters/digits, stored upper-case) → `201`, `409` if the code exists |
+| `PUT /api/v1/units/{id}` | `UNIT_MANAGE` | Rename or recode |
+| `DELETE /api/v1/units/{id}` | `UNIT_MANAGE` | `409` while products use it → `204` |
+
+### Suppliers
+
+| Method & path | Permission | Description |
+|---|---|---|
+| `POST /api/v1/suppliers` | `SUPPLIER_MANAGE` | Create → `201` (`409` if the name exists, case-insensitive) |
+| `GET /api/v1/suppliers` | `SUPPLIER_VIEW` | Paginated. Filters `q` (name, contact, phone, email), `active`; sort `name`, `createdAt` |
+| `GET /api/v1/suppliers/{id}` | `SUPPLIER_VIEW` | Get |
+| `PUT /api/v1/suppliers/{id}` | `SUPPLIER_MANAGE` | Update (`active: false` stops new orders) |
+| `DELETE /api/v1/suppliers/{id}` | `SUPPLIER_MANAGE` | Deletes an unused supplier; one with purchasing history is **deactivated** instead → `204` |
+
+Fields: `name` (required), `contactPerson`, `phone`, `email` (validated), `address`, `tpin` (10 digits), `notes`, `active`.
+
+### Purchase orders
+
+An order never changes stock; only [goods receipts](#goods-receipts) do.
+
+```
+DRAFT ──place──► ORDERED ──receipt──► PARTIALLY_RECEIVED ──receipt──► RECEIVED
+  │                 │                        │
+  └──────cancel─────┘ (nothing received)     └──close──► CLOSED (short delivery accepted)
+                    ▼
+                CANCELLED
+```
+
+| Method & path | Permission | Description |
+|---|---|---|
+| `POST /api/v1/purchase-orders` | `PURCHASE_MANAGE` | Create as `DRAFT`, or `"order": true` to place it at once → `201` |
+| `GET /api/v1/purchase-orders` | `PURCHASE_VIEW` | Paginated. Filters `status`, `supplierId`, `from`/`to` (order date), `q` (PO number or supplier reference); sort `poNumber`, `orderDate`, `expectedDate`, `createdAt`, `status` |
+| `GET /api/v1/purchase-orders/{id}` | `PURCHASE_VIEW` | With lines and received/outstanding quantities |
+| `PUT /api/v1/purchase-orders/{id}` | `PURCHASE_MANAGE` | Edit a `DRAFT` (`409` otherwise). Sending `lines` replaces the line set |
+| `POST /api/v1/purchase-orders/{id}/place` | `PURCHASE_MANAGE` | `DRAFT` → `ORDERED` |
+| `POST /api/v1/purchase-orders/{id}/cancel` | `PURCHASE_MANAGE` | Body `{ "reason" }`. Only when nothing has been received (`409` otherwise) |
+| `POST /api/v1/purchase-orders/{id}/close` | `PURCHASE_MANAGE` | Body `{ "reason" }`. For `PARTIALLY_RECEIVED`: the rest will not arrive |
+
+Request: `supplierId` (active supplier), `orderDate` (default today), `expectedDate`, `supplierReference`, `notes`,
+`lines[]` of `{ productId, quantity (> 0), unitCost (≥ 0; default the product's cost price) }`, `order`. Each product may
+appear once. Products must be active and inventory-tracked.
+Response adds `poNumber` (`PO-yyyyMMdd-0001`), `status`, `totalCost`, audit fields (`createdBy`, `orderedBy/At`,
+`cancelledBy/At`, `cancelReason`) and `lines[]` with `id`, `orderedQuantity`, `receivedQuantity`,
+`outstandingQuantity`, `returnedQuantity`, `unitCost`, `lineCost`.
+
+### Goods receipts
+
+| Method & path | Permission | Description |
+|---|---|---|
+| `POST /api/v1/purchase-orders/{id}/receipts` | `PURCHASE_RECEIVE` | Receive goods → `201` |
+| `GET /api/v1/goods-receipts` | `PURCHASE_VIEW` | Paginated receiving history. Filters `supplierId`, `purchaseOrderId`, `productId`, `from`, `to`; sort `receivedAt`, `receiptNumber` |
+| `GET /api/v1/goods-receipts/{id}` | `PURCHASE_VIEW` | One receipt |
+
+```json
+{
+  "requestId": "grn-8f2c91d0aa31",
+  "supplierInvoiceNumber": "INV-7731",
+  "notes": "Delivered by truck",
+  "lines": [ { "productId": 12, "quantity": 6 }, { "poLineId": 41, "quantity": 5, "unitCost": "4.20" } ]
+}
+```
+
+* A line names the order line by `poLineId` or `productId`. `unitCost` is the cost actually invoiced (default: the order's).
+* **Partial and repeated deliveries:** any number of receipts per order. A quantity above what is **outstanding**
+  (`ordered − received`) is refused (`400 … only N outstanding`); over-receipt is not allowed.
+* The order becomes `PARTIALLY_RECEIVED` and then `RECEIVED` automatically. A receipt on a draft, cancelled, closed or
+  fully received order → `409`.
+* Each line raises a `PURCHASE_RECEIPT` movement at the invoiced cost (re-averaging the product) and sets the product's
+  latest `costPrice`.
+* `requestId` is required; repeating it returns the original receipt without receiving again (also under concurrent
+  duplicates). Receipts are immutable; a mistake is corrected with a [supplier return](#supplier-returns) or an adjustment.
+
+Response: `id`, `receiptNumber` (`GRN-…`), `purchaseOrderId`, `poNumber`, `supplierId`, `supplierName`,
+`supplierInvoiceNumber`, `notes`, `receivedBy`, `receivedAt`, `totalCost`, `purchaseOrderStatus`, `lines[]`
+(`poLineId`, `productId`, `productName`, `quantity`, `unitCost`, `totalCost`).
+
+### Supplier returns
+
+Goods sent back to a supplier. They remove stock; the order and the original receipts keep their figures.
+
+| Method & path | Permission | Description |
+|---|---|---|
+| `POST /api/v1/supplier-returns` | `PURCHASE_RECEIVE` | Create → `201` |
+| `GET /api/v1/supplier-returns` | `PURCHASE_VIEW` | Paginated; filters `supplierId`, `from`, `to`; sort `returnedAt`, `returnNumber` |
+| `GET /api/v1/supplier-returns/{id}` | `PURCHASE_VIEW` | One return |
+
+```json
+{ "requestId": "srn-5d2a77c1e90b", "supplierId": 3, "purchaseOrderId": 17, "reason": "Faulty batch",
+  "lines": [ { "productId": 12, "quantity": 4, "creditUnitCost": "4.00" } ] }
+```
+
+`requestId` (required) and `reason` (required) as above. With `purchaseOrderId`, a line may not exceed the units
+delivered and not yet returned on that order (`400`), and the order line's `returnedQuantity` grows. Stock leaves as
+`SUPPLIER_RETURN` at the average cost; `creditUnitCost` (default: the order's cost) is the credit the supplier gives and
+feeds the purchases report. Stock that has already been sold cannot be returned (`400 Insufficient stock`).
+
+### Stock counts
+
+A physical count reconciles the system with the shelf.
+
+| Method & path | Permission | Description |
+|---|---|---|
+| `POST /api/v1/stock-counts` | `STOCK_COUNT_MANAGE` | Open a count → `201`. Body (optional): `notes`, and `categoryId` or `allTrackedProducts: true` to pre-list products |
+| `PUT /api/v1/stock-counts/{id}/lines` | `STOCK_COUNT_MANAGE` | `{ "lines": [ { "productId" \| "barcode", "countedQuantity" } ] }` – add products and record counts |
+| `POST /api/v1/stock-counts/{id}/commit` | `STOCK_COUNT_MANAGE` | Book the variances |
+| `POST /api/v1/stock-counts/{id}/cancel` | `STOCK_COUNT_MANAGE` | Discard an open count |
+| `GET /api/v1/stock-counts` | `INVENTORY_VIEW` | Paginated; filter `status` (`OPEN`, `COMMITTED`, `CANCELLED`) |
+| `GET /api/v1/stock-counts/{id}` | `INVENTORY_VIEW` | Lines with expected, counted, variance and value |
+
+When a product is first added to a count, its system quantity is saved as `expectedQuantity`. On commit,
+`variance = counted − expected` is booked as a `COUNT` movement (reason `COUNT_VARIANCE`) valued at the average cost.
+Because the variance is applied to the *current* balance, sales made while the count was open are preserved. Lines that
+were never counted are ignored. Committing again → `409`; a commit that would take any product below zero is rejected
+as a whole (`400`) and the count stays open. Response totals: `totalOverage`, `totalShortage`, `netVarianceValue`,
+`linesCounted`, `linesUncounted`.
+
+### Inventory reports
+
+Reports are aggregated by the database from the ledger, sale lines, receipts and counts. They need `REPORT_VIEW` and the
+SME plan (`403` on MICRO). Stock levels, the summary and movement history above stay available on every plan.
+
+| Endpoint | Parameters | Returns |
+|---|---|---|
+| `GET /inventory/reports/valuation` | `categoryId` | `method` (`WEIGHTED_AVERAGE`), `products`, `units`, `costValue`, `retailValue`, `potentialMargin`, `byCategory[]` – tracked products with stock on hand |
+| `GET /inventory/reports/cogs` | `from`, `to` (required), `categoryId` | `unitsSold`, `unitsRefunded`, `revenue` (ex VAT, net of refunds), `costOfGoodsSold`, `grossProfit`, `marginPercent`, `linesWithoutCost`, `byCategory[]`. Voided sales are excluded |
+| `GET /inventory/reports/movers` | `from`, `to`, `direction` (`FAST` default, `SLOW`), `limit` (1–500, default 10) | FAST: best sellers by units. SLOW: products with stock that sold least, including none – `items[]` of `productId`, `name`, `sku`, `stockQuantity`, `unitsSold`, `revenue` |
+| `GET /inventory/reports/adjustments` | `from`, `to` | Adjustments and count variances grouped by type and reason: `movements`, `unitsIn`, `unitsOut`, `netValue`; plus `committedCounts`, `countNetVarianceValue` |
+| `GET /inventory/reports/purchases` | `from`, `to`, `supplierId` | Receipts and supplier returns: totals and `bySupplier[]` (`receipts`, `units`, `receivedCost`, `returns`, `returnedCredit`) |
+| `GET /inventory/reports/depletion` | `from`, `to`, `categoryId`, `limit` (default 50) | Per product from the ledger: `sold`, `voided`, `returned`, `netDepleted` (sold − voided − returned) |
+
+All paths are under `/api/v1`. `GET /reports/inventory/value` (existing) now values stock at the average cost.
+
+**Not provided:** batch and expiry tracking (balances are per product, not per batch, so expiring stock cannot be
+reported reliably), multi-location stock and transfers (single location), fractional quantities, and FIFO costing.
 
 ---
 
@@ -374,7 +662,7 @@ Products without a barcode are unaffected.
 | `GET /api/v1/sales/{id}` | `SALE_VIEW` | Get by id |
 | `GET /api/v1/sales/number/{saleNumber}` | `SALE_VIEW` | Get by sale number |
 | `GET /api/v1/sales/date-range?from=&to=` | `SALE_VIEW` | Sales between two dates (`yyyy-MM-dd`; `from` must not be after `to`) |
-| `POST /api/v1/sales/{id}/void` | `SALE_VOID` | Void a sale (only if it has no payments) |
+| `POST /api/v1/sales/{id}/void` | `SALE_VOID` | Void a sale that has no payments. Optional body `{ "reason" }`; stock returns at the original cost; the sale records `voidReason`, `voidedBy`, `voidedAt` |
 | `POST /api/v1/sales/{id}/refund` | `SALE_REFUND` | Full or partial refund |
 | `GET /api/v1/sales/needs-review` | `DEVICE_MANAGE` | Offline-synced sales flagged with conflicts |
 | `POST /api/v1/sales/{id}/review` | `DEVICE_MANAGE` | Mark a flagged sale as reviewed |
@@ -433,9 +721,11 @@ Body optional. Fields:
 | `reason` | free text |
 | `zraReasonCode` | ZRA `rfdRsnCd`; defaults to `pos.zra.default-refund-reason-code` |
 | `refundPaymentMethodId` | tender used to pay out; if omitted, refunds go against the sale's own payments, latest first |
+| `items[].condition` | `SALEABLE` (default) returns the goods to stock; `DAMAGED` returns then writes them off |
+| `damagedSaleItemIds` | items from `saleItemIds` whose returned goods are damaged |
 
 #### SaleResponse
-`id`, `saleNumber`, `customerId`, `customerName`, `customerPhone`, `subtotal`, `discountAmount`, `vatAmount`, `totalAmount`, `amountPaid`, `balanceDue`, `changeGiven`, `refundedAmount`, `paymentStatus`, `saleStatus`, `notes`, `createdBy`, `createdAt`, `soldAt`, `clientSaleId`, `deviceId`, `clientReceiptNumber`, `source` (`ONLINE` / `OFFLINE_SYNC`), `needsReview`, `syncConflicts[]`, `receiptId`, `receiptNumber`, `zraStatus`, `items[]`, `payments[]` (PaymentResponse), `refunds[]`.
+`id`, `saleNumber`, `customerId`, `customerName`, `customerPhone`, `subtotal`, `discountAmount`, `vatAmount`, `totalAmount`, `amountPaid`, `balanceDue`, `changeGiven`, `refundedAmount`, `paymentStatus`, `saleStatus`, `notes`, `createdBy`, `createdAt`, `soldAt`, `clientSaleId`, `deviceId`, `clientReceiptNumber`, `source` (`ONLINE` / `OFFLINE_SYNC`), `needsReview`, `voidReason`, `voidedBy`, `voidedAt`, `syncConflicts[]`, `receiptId`, `receiptNumber`, `zraStatus`, `items[]`, `payments[]` (PaymentResponse), `refunds[]`.
 
 **SaleItemResponse:** `id`, `productId`, `productName`, `quantity`, `unitPrice`, `grossAmount`, `lineTotal`, `saleDiscountShare`, `taxableAmount`, `vatRate`, `vatAmount`, `discountAmount`, `totalAmount`, `zraTaxType`, `itemStatus` (`ACTIVE`/`REFUNDED`), `refundedQuantity`, `refundedAmount`.
 
@@ -677,7 +967,11 @@ WhatsApp sending depends on `pos.whatsapp.provider` (`NONE` = click-to-chat link
 | Sale item `itemStatus` | `ACTIVE`, `REFUNDED` |
 | Payment `paymentStatus` | `SUCCESS`, `FAILED`, `REFUNDED` |
 | Payment method `type` | `CASH`, `MOBILE_MONEY`, `CARD`, `BANK_TRANSFER`, `OTHER` |
-| Inventory `movementType` | `SALE`, `RESTOCK`, `ADJUSTMENT`, `RETURN`, `TRANSFER` |
+| Inventory `movementType` | `OPENING`, `PURCHASE_RECEIPT`, `RESTOCK`, `SALE`, `SALE_VOID`, `RETURN`, `SUPPLIER_RETURN`, `ADJUSTMENT`, `COUNT`, `TRANSFER` (unused) |
+| Adjustment `reasonCode` | `DAMAGED`, `EXPIRED`, `LOST`, `FOUND`, `CORRECTION`, `OTHER` (the system also writes `DAMAGED_RETURN`, `VOID`, `COUNT_VARIANCE`, `SUPPLIER_RETURN`) |
+| Purchase order `status` | `DRAFT`, `ORDERED`, `PARTIALLY_RECEIVED`, `RECEIVED`, `CANCELLED`, `CLOSED` |
+| Stock count `status` | `OPEN`, `COMMITTED`, `CANCELLED` |
+| Stock level `status` | `IN_STOCK`, `LOW_STOCK`, `OUT_OF_STOCK` |
 | ZRA `submissionStatus` | `PENDING`, `RETRYING`, `SUCCESS`, `FAILED` |
 | ZRA `submissionType` | `SALE_INVOICE`, `CREDIT_NOTE`, `ITEM_REGISTRATION` |
 | Merchant `plan` | `MICRO`, `SME` |
@@ -706,10 +1000,12 @@ Roles and permissions are seeded at startup. Default roles:
 | Role | Permissions |
 |---|---|
 | **ADMIN** | All permissions |
-| **MANAGER** | Product view/create/update/import · category view/create/update · user view · branch view/create/update · customer view/create/update · inventory view/adjust · sale view/create/void/refund · receipt view/reprint · report view · payment method view · ZRA view · sync device · device manage · reconciliation view/manage · WhatsApp send |
+| **MANAGER** | Product view/create/update/import/**price update** · category view/create/update · user view · branch view/create/update · customer view/create/update · inventory view/adjust · sale view/create/void/refund · receipt view/reprint · report view · payment method view · ZRA view · sync device · device manage · reconciliation view/manage · WhatsApp send · unit manage · supplier view/manage · purchase view/manage/receive · stock count manage |
 | **CASHIER** | Product view · category view · customer view/create/update · sale view/create · receipt view/reprint · inventory view · payment method view · sync device · WhatsApp send |
 
-All permission names: `PRODUCT_VIEW|CREATE|UPDATE|DELETE|IMPORT`, `CATEGORY_VIEW|CREATE|UPDATE|DELETE`, `USER_VIEW|CREATE|UPDATE|DELETE`, `BRANCH_VIEW|CREATE|UPDATE|DELETE`, `CUSTOMER_VIEW|CREATE|UPDATE|DELETE`, `INVENTORY_VIEW|ADJUST`, `SALE_VIEW|CREATE|VOID|REFUND`, `PAYMENT_METHOD_VIEW|CREATE|UPDATE|DELETE`, `RECEIPT_VIEW|REPRINT`, `ZRA_VIEW|MANAGE`, `REPORT_VIEW`, `SYNC_DEVICE`, `DEVICE_MANAGE`, `RECONCILIATION_VIEW|MANAGE`, `MERCHANT_MANAGE`, `SUPPORT_MANAGE`, `WHATSAPP_SEND`.
+All permission names: `PRODUCT_VIEW|CREATE|UPDATE|DELETE|IMPORT`, `CATEGORY_VIEW|CREATE|UPDATE|DELETE`, `USER_VIEW|CREATE|UPDATE|DELETE`, `BRANCH_VIEW|CREATE|UPDATE|DELETE`, `CUSTOMER_VIEW|CREATE|UPDATE|DELETE`, `INVENTORY_VIEW|ADJUST`, `SALE_VIEW|CREATE|VOID|REFUND`, `PAYMENT_METHOD_VIEW|CREATE|UPDATE|DELETE`, `RECEIPT_VIEW|REPRINT`, `ZRA_VIEW|MANAGE`, `REPORT_VIEW`, `SYNC_DEVICE`, `DEVICE_MANAGE`, `RECONCILIATION_VIEW|MANAGE`, `MERCHANT_MANAGE`, `SUPPORT_MANAGE`, `WHATSAPP_SEND`, `PRODUCT_PRICE_UPDATE`, `UNIT_MANAGE`, `SUPPLIER_VIEW|MANAGE`, `PURCHASE_VIEW|MANAGE|RECEIVE`, `STOCK_COUNT_MANAGE`.
+
+Inventory permissions in practice: `INVENTORY_VIEW` (stock, movements, counts) · `INVENTORY_ADJUST` (adjust, restock, change a product's stock) · `PRODUCT_PRICE_UPDATE` (prices and costs) · `PURCHASE_MANAGE` (orders) · `PURCHASE_RECEIVE` (receipts and supplier returns) · `STOCK_COUNT_MANAGE` · `REPORT_VIEW` + SME plan (inventory reports). CASHIERs can look up stock and sell but cannot change stock, prices or purchasing.
 
 ---
 
@@ -724,11 +1020,13 @@ The merchant plan (`GET /api/v1/merchant`) gates features. A restricted call ret
 | `reports` | no | yes | `/reports/sales/*`, `/reports/products/top`, `/reports/inventory/value` |
 | `reconciliation` | no | yes | Reconciliations and Z-report endpoints |
 
-Available on every plan: sales, payments, receipts, products, categories, customers, offline sync, `GET /reports/today`, dashboard.
+The `reports` feature also covers the inventory reports (`/inventory/reports/*`). Suppliers, purchasing, stock counts, stock levels and movement history work on every plan.
+
+Available on every plan: sales, payments, receipts, products, categories, customers, inventory (adjustments, purchasing, counts), offline sync, `GET /reports/today`, dashboard.
 
 ---
 
-## Running migrations and testing barcode support
+## Running migrations and tests
 
 **Migrations** run automatically at application start (`SchemaMigrationRunner`); there is nothing to run by hand. After
 upgrading, check the log for `Applied schema migration 2026.10.06-normalise-product-barcodes` and any warnings about
@@ -762,6 +1060,67 @@ curl -s -X POST localhost:8081/api/v1/sales -H "Authorization: Bearer $TOKEN" -H
 
 **Mobile app** (`kantemba/`): `flutter analyze` and `flutter test` (unit tests for the scan flow, checkout request and
 barcode rules; widget tests that drive the checkout and product screens against a fake server).
+
+### Inventory: database changes, migrations and compatibility
+
+**Schema changes** (created automatically by Hibernate at startup; all additive):
+
+| Table | Change |
+|---|---|
+| `products` | + `description`, `unit_id` → `units`, `average_cost` (4 decimals) |
+| `inventory_movements` | + `unit_cost`, `balance_after`, `reason`, `request_id` (unique); indexes on (product, time), (type, time), (reference) |
+| `sale_items` | + `unit_cost` (cost snapshot); index on `product_id` |
+| `sales` | + `void_reason`, `voided_by`, `voided_at`; index on `sold_at` |
+| new | `units`, `suppliers`, `purchase_orders` (+`_lines`), `goods_receipts` (+`_lines`), `supplier_returns` (+`_lines`), `stock_counts` (+`_lines`), `product_price_history` |
+
+**Data migrations** run once at startup and are recorded in `schema_migrations`:
+
+* `2026.10.07-inventory-costing` – sets `average_cost` from `cost_price`; gives historical sale lines a cost
+  (`unit_cost` = the product's current purchase cost – an estimate, because the true cost at the time was never recorded);
+  backfills `balance_after` on old movements as the running sum per product.
+* `2026.10.08-inventory-constraints` – adds CHECK constraints (`NOT VALID`, so existing rows never block startup) as a
+  safety net behind the service validation: order-line quantities (`0 ≤ received ≤ ordered`, `0 ≤ returned ≤ received`),
+  positive receipt/return quantities, non-negative count quantities and non-zero movements. Unique keys also guard
+  `request_id` on movements, receipts and supplier returns, `po_number`/`receipt_number`/…, one line per product in an
+  order and in a count.
+
+Nothing existing is deleted or rewritten except the null columns filled in above. **To roll back**, the new columns and
+tables can simply be left in place (the previous version ignores them). To remove them:
+
+```sql
+ALTER TABLE products DROP COLUMN description, DROP COLUMN unit_id, DROP COLUMN average_cost;
+ALTER TABLE inventory_movements DROP COLUMN unit_cost, DROP COLUMN balance_after, DROP COLUMN reason, DROP COLUMN request_id;
+ALTER TABLE sale_items DROP COLUMN unit_cost;
+ALTER TABLE sales DROP COLUMN void_reason, DROP COLUMN voided_by, DROP COLUMN voided_at;
+DROP TABLE stock_count_lines, stock_counts, supplier_return_lines, supplier_returns, goods_receipt_lines, goods_receipts,
+           purchase_order_lines, purchase_orders, suppliers, product_price_history, units;
+DELETE FROM schema_migrations WHERE version IN ('2026.10.07-inventory-costing', '2026.10.08-inventory-constraints');
+```
+
+**Compatibility notes**
+
+* Existing endpoints keep their paths, and responses only gain fields. `GET /products`, `GET /inventory-movements` and
+  the CSV import behave as before.
+* Opening stock is now recorded as `OPENING` (previously `RESTOCK`) for newly created stock; old rows are unchanged.
+* `PUT /products/{id}` now needs `PRODUCT_PRICE_UPDATE` to change `price`/`costPrice` and `INVENTORY_ADJUST` to change
+  `stockQuantity`. Default ADMIN and MANAGER roles have both; custom roles may need them added.
+* Voids are recorded as `SALE_VOID` (previously an `ADJUSTMENT` with reference `SALE_VOID`); the void endpoint's body is optional.
+* Stock can no longer go negative through any online operation. Offline sync keeps its documented exception.
+* `payments[].amount` may be omitted to settle the server-calculated balance.
+
+**Backend tests**
+
+```bash
+./gradlew test                                                    # everything
+./gradlew test --tests '*InventoryIntegrationTest'                # ledger, costing, adjustments, sales, catalogue, permissions
+./gradlew test --tests '*PurchasingIntegrationTest'               # orders, partial receipts, idempotency, returns, counts
+./gradlew test --tests '*InventoryReportsIntegrationTest'         # COGS, movers, depletion, adjustments, purchases, plan gating
+```
+
+They cover weighted-average costing and COGS, balances equal to the ledger, partial deliveries and over-receipt,
+duplicate and concurrent receipts, supplier returns, stock counts (including sales during a count), voids and
+saleable/damaged customer returns, concurrent sales without overselling, negative-stock refusal, role permissions,
+pagination/filter/sort validation, report figures, the plan gate and the data migration.
 
 ---
 

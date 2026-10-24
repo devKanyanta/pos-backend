@@ -169,8 +169,8 @@ public class ReportServiceImpl implements ReportService {
             if (Boolean.TRUE.equals(product.getTrackInventory()) && product.getStockQuantity() != null) {
                 BigDecimal qty = BigDecimal.valueOf(Math.max(0, product.getStockQuantity()));
 
-                if (product.getCostPrice() != null) {
-                    totalStockValue = totalStockValue.add(product.getCostPrice().multiply(qty));
+                if (product.getAverageCost() != null) {
+                    totalStockValue = totalStockValue.add(product.getAverageCost().multiply(qty));
                 }
 
                 totalSellingValue = totalSellingValue.add(product.getPrice().multiply(qty));

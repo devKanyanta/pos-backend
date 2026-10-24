@@ -105,9 +105,9 @@ class CatalogInventoryIntegrationTest extends IntegrationTestBase {
         assertThat(sugar.get("zraQuantityUnitCode").asString()).isEqualTo("KG");
         assertThat(sugar.get("zraMapped").asBoolean()).isTrue();
 
-        // Opening stock was recorded as a RESTOCK movement.
+        // Opening stock is recorded as an OPENING movement.
         JsonNode movements = api.get("/api/v1/inventory-movements/product/" + sugarId, admin).json();
-        assertThat(movements.get(0).get("movementType").asString()).isEqualTo("RESTOCK");
+        assertThat(movements.get(0).get("movementType").asString()).isEqualTo("OPENING");
         assertThat(movements.get(0).get("quantity").asInt()).isEqualTo(24);
 
         // Re-import as raw text/csv updates by SKU and records the stock difference.

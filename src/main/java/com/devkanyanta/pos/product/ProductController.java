@@ -27,6 +27,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.devkanyanta.pos.auth.security.PermissionConstants;
 import com.devkanyanta.pos.product.dto.ProductImportResult;
 import com.devkanyanta.pos.shared.exception.BadRequestException;
+import com.devkanyanta.pos.shared.web.PageResponse;
 import com.devkanyanta.pos.product.dto.CreateProductRequest;
 import com.devkanyanta.pos.product.dto.ProductResponse;
 import com.devkanyanta.pos.product.dto.UpdateProductRequest;
@@ -114,6 +115,49 @@ public class ProductController {
             @RequestParam("barcode") String barcode
     ) {
         return productService.getProductByBarcode(barcode);
+    }
+
+    /**
+     * Filtered, sorted, paginated product list. {@code GET /products} still returns everything for
+     * existing clients.
+     */
+    @GetMapping("/search")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.PRODUCT_VIEW + "')")
+    public PageResponse<ProductResponse> searchProducts(
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "categoryId", required = false) Long categoryId,
+            @RequestParam(value = "unitId", required = false) Long unitId,
+            @RequestParam(value = "active", required = false) Boolean active,
+            @RequestParam(value = "trackInventory", required = false) Boolean trackInventory,
+            @RequestParam(value = "lowStock", required = false) Boolean lowStock,
+            @RequestParam(value = "outOfStock", required = false) Boolean outOfStock,
+            @RequestParam(value = "hasBarcode", required = false) Boolean hasBarcode,
+            @RequestParam(value = "minPrice", required = false) java.math.BigDecimal minPrice,
+            @RequestParam(value = "maxPrice", required = false) java.math.BigDecimal maxPrice,
+            @RequestParam(value = "sort", required = false) String sort,
+            @RequestParam(value = "page", required = false) Integer page,
+            @RequestParam(value = "size", required = false) Integer size
+    ) {
+        return productService.search(new ProductSpecifications.Filter(q, categoryId, unitId, active, trackInventory,
+                lowStock, outOfStock, hasBarcode, minPrice, maxPrice), page, size, sort);
+    }
+
+    @PostMapping("/{id}/archive")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.PRODUCT_UPDATE + "')")
+    public ProductResponse archiveProduct(@PathVariable Long id) {
+        return productService.archiveProduct(id);
+    }
+
+    @PostMapping("/{id}/restore")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.PRODUCT_UPDATE + "')")
+    public ProductResponse restoreProduct(@PathVariable Long id) {
+        return productService.restoreProduct(id);
+    }
+
+    @GetMapping("/{id}/price-history")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.PRODUCT_VIEW + "')")
+    public List<ProductService.PriceChangeResponse> getPriceHistory(@PathVariable Long id) {
+        return productService.getPriceHistory(id);
     }
 
     @GetMapping("/{id}")

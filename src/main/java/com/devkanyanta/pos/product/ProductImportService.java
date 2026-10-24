@@ -200,8 +200,12 @@ public class ProductImportService {
         product = productRepository.save(product);
 
         if (Boolean.TRUE.equals(product.getTrackInventory()) && openingStock > 0) {
-            stockLedger.record(product, MovementType.RESTOCK, openingStock, product.getId(),
-                    "CSV_IMPORT", "Opening stock (CSV import)", CurrentUser.username());
+            stockLedger.record(StockLedger.Change.builder()
+                    .product(product).type(MovementType.OPENING).quantity(openingStock)
+                    .unitCost(product.getCostPrice() != null ? product.getCostPrice() : java.math.BigDecimal.ZERO)
+                    .referenceId(product.getId()).referenceType("CSV_IMPORT")
+                    .notes("Opening stock (CSV import)").performedBy(CurrentUser.username())
+                    .build());
         } else {
             product.setStockQuantity(openingStock);
         }

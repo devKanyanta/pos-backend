@@ -109,6 +109,9 @@ public class SaleRefundService {
         BigDecimal refundTotal = Money.ZERO;
         BigDecimal refundVat = Money.ZERO;
         Map<Long, Integer> stockReturns = new HashMap<>();
+        Map<Long, Integer> damagedReturns = new HashMap<>();
+        Map<Long, BigDecimal> returnCosts = new HashMap<>();
+        Map<Long, Integer> damagedByItem = resolveDamaged(request, quantities);
 
         for (Map.Entry<SaleItemEntity, Integer> entry : quantities.entrySet()) {
 
@@ -150,7 +153,12 @@ public class SaleRefundService {
             refundVat = refundVat.add(vat);
 
             if (item.getProduct() != null && Boolean.TRUE.equals(item.getProduct().getTrackInventory())) {
-                stockReturns.merge(item.getProduct().getId(), quantity, Integer::sum);
+                Long productId = item.getProduct().getId();
+                stockReturns.merge(productId, quantity, Integer::sum);
+                damagedReturns.merge(productId, damagedByItem.getOrDefault(item.getId(), 0), Integer::sum);
+                if (item.getUnitCost() != null) {
+                    returnCosts.merge(productId, item.getUnitCost().multiply(BigDecimal.valueOf(quantity)), BigDecimal::add);
+                }
             }
         }
 
@@ -164,11 +172,29 @@ public class SaleRefundService {
         for (Long productId : new TreeSet<>(stockReturns.keySet())) {
             ProductEntity product = productRepository.findByIdForUpdate(productId)
                     .orElseThrow(() -> new NotFoundException("Product not found: " + productId));
-            stockLedger.record(product, MovementType.RETURN, stockReturns.get(productId), sale.getId(),
-                    "SALE_REFUND",
-                    "Refund " + refund.getRefundNumber() + " of " + sale.getSaleNumber()
-                            + (refund.getReason() != null ? " - " + refund.getReason() : ""),
-                    refund.getCreatedBy());
+            int returned = stockReturns.get(productId);
+            // Goods come back at the cost they left at, so a refund does not distort the average.
+            BigDecimal cost = returnCosts.containsKey(productId)
+                    ? returnCosts.get(productId).divide(BigDecimal.valueOf(returned), 4, java.math.RoundingMode.HALF_UP)
+                    : null;
+            String note = "Refund " + refund.getRefundNumber() + " of " + sale.getSaleNumber()
+                    + (refund.getReason() != null ? " - " + refund.getReason() : "");
+            stockLedger.record(StockLedger.Change.builder()
+                    .product(product).type(MovementType.RETURN).quantity(returned).unitCost(cost)
+                    .referenceId(sale.getId()).referenceType("SALE_REFUND")
+                    .notes(note).performedBy(refund.getCreatedBy())
+                    .build());
+
+            int damaged = damagedReturns.getOrDefault(productId, 0);
+            if (damaged > 0) {
+                // Damaged goods are not saleable: take them back, then write them off, so the loss is visible.
+                stockLedger.record(StockLedger.Change.builder()
+                        .product(product).type(MovementType.ADJUSTMENT).quantity(-damaged)
+                        .referenceId(sale.getId()).referenceType("SALE_REFUND")
+                        .reason("DAMAGED_RETURN")
+                        .notes("Damaged goods returned: " + note).performedBy(refund.getCreatedBy())
+                        .build());
+            }
         }
 
         sale.setRefundedAmount(Money.nz(sale.getRefundedAmount()).add(refundTotal));
@@ -241,6 +267,41 @@ public class SaleRefundService {
         }
 
         return quantities;
+    }
+
+    /** Units per sale item that come back damaged (item id -> units), validated against what is refunded. */
+    private Map<Long, Integer> resolveDamaged(RefundRequest request, Map<SaleItemEntity, Integer> quantities) {
+
+        Map<Long, Integer> refundedNow = new HashMap<>();
+        quantities.forEach((item, qty) -> refundedNow.put(item.getId(), qty));
+        Map<Long, Integer> damaged = new HashMap<>();
+
+        if (request.getDamagedSaleItemIds() != null) {
+            for (Long itemId : request.getDamagedSaleItemIds()) {
+                Integer qty = refundedNow.get(itemId);
+                if (qty == null) {
+                    throw new BadRequestException("Sale item " + itemId + " is marked damaged but is not being refunded");
+                }
+                damaged.put(itemId, qty);
+            }
+        }
+        if (request.getItems() != null) {
+            for (RefundRequest.RefundItemRequest line : request.getItems()) {
+                String condition = line.getCondition() == null ? "SALEABLE" : line.getCondition().trim().toUpperCase();
+                if (!condition.equals("SALEABLE") && !condition.equals("DAMAGED")) {
+                    throw new BadRequestException("Refund item condition must be SALEABLE or DAMAGED");
+                }
+                if (condition.equals("DAMAGED")) {
+                    damaged.merge(line.getSaleItemId(), line.getQuantity(), Integer::sum);
+                }
+            }
+        }
+        damaged.forEach((itemId, qty) -> {
+            if (qty > refundedNow.getOrDefault(itemId, 0)) {
+                throw new BadRequestException("More units marked damaged than are being refunded for sale item " + itemId);
+            }
+        });
+        return damaged;
     }
 
     private SaleItemEntity requireItem(Map<Long, SaleItemEntity> itemsById, Long itemId) {

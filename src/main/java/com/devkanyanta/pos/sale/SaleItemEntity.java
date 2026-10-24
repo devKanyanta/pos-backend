@@ -9,7 +9,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "sale_items")
+@Table(name = "sale_items", indexes = @jakarta.persistence.Index(name = "idx_sale_item_product", columnList = "product_id"))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -34,6 +34,13 @@ public class SaleItemEntity {
 
     @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal unitPrice;
+
+    /**
+     * Average cost per unit when the sale was made. Fixed at sale time so the cost of goods sold never
+     * changes when later purchases move the product's average. Null for lines without a known product.
+     */
+    @Column(precision = 19, scale = 4)
+    private BigDecimal unitCost;
 
     @Column(nullable = false)
     private Integer quantity;

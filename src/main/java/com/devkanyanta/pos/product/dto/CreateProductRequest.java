@@ -11,6 +11,11 @@ public class CreateProductRequest {
 
     private String name;
 
+    private String description;
+
+    /** Unit of measurement (see /units). */
+    private Long unitId;
+
     private String barcode;
 
     private String sku;

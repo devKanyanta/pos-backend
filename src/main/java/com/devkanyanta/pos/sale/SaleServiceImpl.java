@@ -311,6 +311,7 @@ public class SaleServiceImpl implements SaleService {
                 vatRate = product.getVatRate() != null ? product.getVatRate() : BigDecimal.ZERO;
 
                 item.setProduct(product);
+                item.setUnitCost(product.getAverageCost());
                 item.setProductName(product.getName());
                 item.setZraItemCode(product.getZraItemCode());
                 item.setZraItemClassCode(product.getZraItemClassCode());
@@ -372,8 +373,14 @@ public class SaleServiceImpl implements SaleService {
         saleRepository.save(sale);
 
         for (Map.Entry<Long, Integer> entry : requestedByProduct.entrySet()) {
-            stockLedger.record(products.get(entry.getKey()), MovementType.SALE, -entry.getValue(),
-                    sale.getId(), "SALE", "Sale: " + sale.getSaleNumber(), cashier);
+            // Online sales were checked against stock above; only offline sales (goods already handed over)
+            // may take stock below zero, and they are flagged NEGATIVE_STOCK for review.
+            stockLedger.record(StockLedger.Change.builder()
+                    .product(products.get(entry.getKey())).type(MovementType.SALE).quantity(-entry.getValue())
+                    .referenceId(sale.getId()).referenceType("SALE")
+                    .notes("Sale: " + sale.getSaleNumber()).performedBy(cashier)
+                    .allowNegative(offline)
+                    .build());
         }
 
         if (draft.payments() != null) {
@@ -454,7 +461,7 @@ public class SaleServiceImpl implements SaleService {
 
     @Override
     @Transactional
-    public SaleResponse voidSale(Long id, String username) {
+    public SaleResponse voidSale(Long id, String username, String reason) {
 
         SaleEntity sale = saleRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new NotFoundException("Sale not found"));
@@ -468,20 +475,38 @@ public class SaleServiceImpl implements SaleService {
         }
 
         sale.setSaleStatus(SaleStatus.VOIDED);
+        sale.setVoidReason(Texts.truncate(Texts.clean(reason), 500));
+        sale.setVoidedBy(username);
+        sale.setVoidedAt(LocalDateTime.now());
 
-        // Reverse stock changes, one movement per product.
+        // Reverse stock changes, one movement per product, at the cost the goods left stock at.
         Map<Long, Integer> quantities = new HashMap<>();
+        Map<Long, BigDecimal> costs = new HashMap<>();
         for (SaleItemEntity item : sale.getItems()) {
             if (item.getProduct() != null && Boolean.TRUE.equals(item.getProduct().getTrackInventory())) {
                 quantities.merge(item.getProduct().getId(), item.getQuantity(), Integer::sum);
+                if (item.getUnitCost() != null) {
+                    costs.merge(item.getProduct().getId(),
+                            item.getUnitCost().multiply(BigDecimal.valueOf(item.getQuantity())), BigDecimal::add);
+                }
             }
         }
 
         for (Long productId : new TreeSet<>(quantities.keySet())) {
             ProductEntity product = productRepository.findByIdForUpdate(productId)
                     .orElseThrow(() -> new NotFoundException("Product not found: " + productId));
-            stockLedger.record(product, MovementType.ADJUSTMENT, quantities.get(productId),
-                    sale.getId(), "SALE_VOID", "Voided sale: " + sale.getSaleNumber(), username);
+            int quantity = quantities.get(productId);
+            BigDecimal cost = costs.containsKey(productId)
+                    ? costs.get(productId).divide(BigDecimal.valueOf(quantity), 4, java.math.RoundingMode.HALF_UP)
+                    : null;
+            stockLedger.record(StockLedger.Change.builder()
+                    .product(product).type(MovementType.SALE_VOID).quantity(quantity).unitCost(cost)
+                    .referenceId(sale.getId()).referenceType("SALE_VOID")
+                    .reason("VOID")
+                    .notes("Voided sale: " + sale.getSaleNumber()
+                            + (sale.getVoidReason() != null ? " - " + sale.getVoidReason() : ""))
+                    .performedBy(username)
+                    .build());
         }
 
         return saleMapper.toResponse(saleRepository.save(sale));

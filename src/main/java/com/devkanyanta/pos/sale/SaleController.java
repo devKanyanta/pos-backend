@@ -12,6 +12,7 @@ import com.devkanyanta.pos.auth.security.PermissionConstants;
 import com.devkanyanta.pos.sale.dto.CreateSaleRequest;
 import com.devkanyanta.pos.sale.dto.RefundRequest;
 import com.devkanyanta.pos.sale.dto.SaleResponse;
+import com.devkanyanta.pos.sale.dto.VoidRequest;
 
 import lombok.RequiredArgsConstructor;
 
@@ -60,9 +61,10 @@ public class SaleController {
     @ResponseStatus(HttpStatus.OK)
     public SaleResponse voidSale(
             @PathVariable Long id,
+            @RequestBody(required = false) VoidRequest request,
             Authentication authentication
     ) {
-        return saleService.voidSale(id, username(authentication));
+        return saleService.voidSale(id, username(authentication), request != null ? request.getReason() : null);
     }
 
     @PostMapping("/{id}/refund")

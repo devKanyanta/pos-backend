@@ -17,7 +17,11 @@ public interface SaleService {
 
     SaleResponse getSaleByNumber(String saleNumber);
 
-    SaleResponse voidSale(Long id, String username);
+    SaleResponse voidSale(Long id, String username, String reason);
+
+    default SaleResponse voidSale(Long id, String username) {
+        return voidSale(id, username, null);
+    }
 
     SaleResponse refundSale(Long id, RefundRequest request, String username);
 

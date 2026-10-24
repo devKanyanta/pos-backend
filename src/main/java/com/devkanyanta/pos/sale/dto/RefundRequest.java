@@ -15,6 +15,12 @@ public class RefundRequest {
     /** Items to refund partially, by quantity. */
     private List<RefundItemRequest> items;
 
+    /**
+     * Items from {@link #saleItemIds} whose returned goods are damaged and must not go back on the shelf.
+     * They are taken back into stock and written off at once (two auditable movements).
+     */
+    private List<Long> damagedSaleItemIds;
+
     private String reason;
 
     /** ZRA refund reason code (rfdRsnCd); defaults to pos.zra.default-refund-reason-code. */
@@ -33,5 +39,8 @@ public class RefundRequest {
         private Long saleItemId;
 
         private Integer quantity;
+
+        /** SALEABLE (default) puts the goods back in stock; DAMAGED writes them off. */
+        private String condition;
     }
 }

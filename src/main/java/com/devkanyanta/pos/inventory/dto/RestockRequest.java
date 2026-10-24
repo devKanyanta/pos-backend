@@ -14,8 +14,11 @@ public class RestockRequest {
     /** Units received; must be positive. */
     private Integer quantity;
 
-    /** Optional new unit cost; updates the product's cost price. */
+    /** Unit cost of this delivery. Re-averages the product's weighted-average cost and becomes its latest purchase cost. */
     private BigDecimal unitCost;
 
     private String notes;
+
+    /** Optional idempotency key (8-64 chars). Resubmitting it returns the first result without receiving again. */
+    private String requestId;
 }
