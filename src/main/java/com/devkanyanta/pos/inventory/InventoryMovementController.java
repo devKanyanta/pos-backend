@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import com.devkanyanta.pos.auth.security.PermissionConstants;
 import com.devkanyanta.pos.inventory.dto.AdjustmentRequest;
 import com.devkanyanta.pos.inventory.dto.InventoryMovementResponse;
+import com.devkanyanta.pos.inventory.dto.RestockRequest;
 
 import lombok.RequiredArgsConstructor;
 
@@ -43,5 +44,16 @@ public class InventoryMovementController {
     ) {
         String username = authentication != null ? authentication.getName() : "system";
         return inventoryMovementService.adjustStock(request, username);
+    }
+
+    @PostMapping("/restock")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.INVENTORY_ADJUST + "')")
+    @ResponseStatus(HttpStatus.CREATED)
+    public InventoryMovementResponse restock(
+            @RequestBody RestockRequest request,
+            Authentication authentication
+    ) {
+        String username = authentication != null ? authentication.getName() : "system";
+        return inventoryMovementService.restock(request, username);
     }
 }

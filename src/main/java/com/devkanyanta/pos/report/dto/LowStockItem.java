@@ -7,7 +7,11 @@ import lombok.Getter;
 @Builder
 public class LowStockItem {
 
+    private Long productId;
+
     private String productName;
 
     private Integer stockQuantity;
+
+    private Integer reorderLevel;
 }

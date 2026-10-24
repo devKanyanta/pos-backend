@@ -1,33 +1,43 @@
 package com.devkanyanta.pos.report;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.devkanyanta.pos.payment.PaymentEntity;
 import com.devkanyanta.pos.payment.PaymentRepository;
+import com.devkanyanta.pos.product.ProductEntity;
 import com.devkanyanta.pos.product.ProductRepository;
 import com.devkanyanta.pos.report.dto.DailySalesReport;
 import com.devkanyanta.pos.report.dto.InventoryValueReport;
 import com.devkanyanta.pos.report.dto.LowStockItem;
 import com.devkanyanta.pos.report.dto.ProductSummary;
 import com.devkanyanta.pos.report.dto.SalesSummaryReport;
+import com.devkanyanta.pos.report.dto.TodaySummary;
 import com.devkanyanta.pos.sale.SaleEntity;
-import com.devkanyanta.pos.sale.SaleItemEntity;
-import com.devkanyanta.pos.sale.SaleRepository;
 import com.devkanyanta.pos.sale.SaleEntity.SaleStatus;
+import com.devkanyanta.pos.sale.SaleRepository;
+import com.devkanyanta.pos.shared.config.PosProperties;
+import com.devkanyanta.pos.shared.exception.BadRequestException;
+import com.devkanyanta.pos.shared.util.Money;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import lombok.RequiredArgsConstructor;
 
+/**
+ * Sales and inventory reports. Sales are grouped by business time ({@code soldAt}), so offline
+ * sales count on the day they happened, not the day they were synced. Voided sales are excluded.
+ */
 @Service
 @RequiredArgsConstructor
 public class ReportServiceImpl implements ReportService {
@@ -40,67 +50,60 @@ public class ReportServiceImpl implements ReportService {
 
     private final EntityManager entityManager;
 
+    private final PosProperties properties;
+
+    private final Clock clock;
+
     @Override
+    @Transactional(readOnly = true)
     public DailySalesReport getDailySalesReport(LocalDate date) {
 
         LocalDateTime start = date.atStartOfDay();
-        LocalDateTime end = date.atTime(LocalTime.MAX);
+        LocalDateTime end = date.plusDays(1).atStartOfDay();
 
-        List<SaleEntity> sales = saleRepository.findByCreatedAtBetweenOrderByCreatedAtDesc(start, end);
-
-        long totalSales = sales.stream()
-                .filter(s -> s.getSaleStatus() == SaleStatus.ACTIVE)
- .count();
+        List<SaleEntity> sales = saleRepository.findSoldBetween(start, end).stream()
+                .filter(s -> s.getSaleStatus() != SaleStatus.VOIDED)
+                .toList();
 
         BigDecimal totalRevenue = sales.stream()
-                .filter(s -> s.getSaleStatus() == SaleStatus.ACTIVE)
                 .map(SaleEntity::getTotalAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .reduce(Money.ZERO, BigDecimal::add);
 
         BigDecimal totalVat = sales.stream()
-                .filter(s -> s.getSaleStatus() == SaleStatus.ACTIVE)
-                .map(SaleEntity::getVatAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .map(s -> Money.nz(s.getVatAmount()))
+                .reduce(Money.ZERO, BigDecimal::add);
 
-        // Payment method breakdown from payments of these sales
+        // Money received per tender for the day's sales.
         Map<String, BigDecimal> paymentMethodBreakdown = new LinkedHashMap<>();
-        sales.stream()
-                .filter(s -> s.getSaleStatus() == SaleStatus.ACTIVE)
-                .forEach(sale -> {
-                    List<PaymentEntity> payments = paymentRepository.findBySaleId(sale.getId());
-                    payments.stream()
-                            .filter(p -> p.getPaymentStatus() == PaymentEntity.PaymentStatus.SUCCESS)
-                            .forEach(p -> {
-                                String methodName = p.getPaymentMethod().getName();
-                                paymentMethodBreakdown.merge(methodName, p.getAmount(), BigDecimal::add);
-                            });
-                });
-
-        // Top products for the day
-        List<ProductSummary> topProducts = getTopProducts(date, date, 10);
+        sales.forEach(sale -> sale.getPayments().stream()
+                .filter(p -> p.getPaymentStatus() != PaymentEntity.PaymentStatus.FAILED)
+                .forEach(p -> paymentMethodBreakdown.merge(p.getPaymentMethod().getName(), p.getAmount(), BigDecimal::add)));
 
         return DailySalesReport.builder()
                 .date(date.toString())
-                .totalSales(totalSales)
+                .totalSales((long) sales.size())
                 .totalRevenue(totalRevenue)
                 .totalVat(totalVat)
                 .paymentMethodBreakdown(paymentMethodBreakdown)
-                .topProducts(topProducts)
+                .topProducts(getTopProducts(date, date, 10))
                 .build();
     }
 
     @Override
+    @Transactional(readOnly = true)
     public SalesSummaryReport getSalesSummary(LocalDate from, LocalDate to) {
 
+        validateRange(from, to);
+
         LocalDateTime start = from.atStartOfDay();
-        LocalDateTime end = to.atTime(LocalTime.MAX);
+        LocalDateTime end = to.plusDays(1).atStartOfDay();
 
         Long totalSales = saleRepository.countSalesBetween(start, end);
-        BigDecimal totalRevenue = saleRepository.totalRevenueBetween(start, end);
-        BigDecimal totalVat = saleRepository.totalVatBetween(start, end);
+        BigDecimal totalRevenue = Money.of(saleRepository.totalRevenueBetween(start, end));
+        BigDecimal totalVat = Money.of(saleRepository.totalVatBetween(start, end));
         BigDecimal avgOrderValue = totalSales > 0
-                ? totalRevenue.divide(BigDecimal.valueOf(totalSales), 2, java.math.RoundingMode.HALF_UP)
-                : BigDecimal.ZERO;
+                ? totalRevenue.divide(BigDecimal.valueOf(totalSales), 2, RoundingMode.HALF_UP)
+                : Money.ZERO;
 
         return SalesSummaryReport.builder()
                 .from(from)
@@ -113,26 +116,31 @@ public class ReportServiceImpl implements ReportService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     @SuppressWarnings("unchecked")
     public List<ProductSummary> getTopProducts(LocalDate from, LocalDate to, int limit) {
 
-        LocalDateTime start = from.atStartOfDay();
-        LocalDateTime end = to.atTime(LocalTime.MAX);
+        validateRange(from, to);
+
+        if (limit <= 0 || limit > 100) {
+            throw new BadRequestException("limit must be between 1 and 100");
+        }
 
         Query query = entityManager.createQuery(
-                "SELECT si.productName, SUM(si.quantity), SUM(si.lineTotal) " +
+                "SELECT si.productName, SUM(si.quantity - si.refundedQuantity), "
+                + "SUM(si.taxableAmount + si.vatAmount - si.refundedAmount) " +
                 "FROM SaleItemEntity si " +
                 "JOIN si.sale s " +
-                "WHERE s.createdAt BETWEEN :start AND :end " +
-                "AND s.saleStatus = :status " +
-                "AND si.itemStatus = 'ACTIVE' " +
+                "WHERE s.soldAt >= :start AND s.soldAt < :end " +
+                "AND s.saleStatus <> :voided " +
                 "GROUP BY si.productName " +
-                "ORDER BY SUM(si.quantity) DESC"
+                "HAVING SUM(si.quantity - si.refundedQuantity) > 0 " +
+                "ORDER BY SUM(si.quantity - si.refundedQuantity) DESC"
         );
 
-        query.setParameter("start", start);
-        query.setParameter("end", end);
-        query.setParameter("status", SaleStatus.ACTIVE);
+        query.setParameter("start", from.atStartOfDay());
+        query.setParameter("end", to.plusDays(1).atStartOfDay());
+        query.setParameter("voided", SaleStatus.VOIDED);
         query.setMaxResults(limit);
 
         List<Object[]> results = query.getResultList();
@@ -141,39 +149,42 @@ public class ReportServiceImpl implements ReportService {
                 .map(row -> ProductSummary.builder()
                         .productName((String) row[0])
                         .totalQuantity(((Number) row[1]).longValue())
-                        .totalRevenue((BigDecimal) row[2])
+                        .totalRevenue(Money.of((BigDecimal) row[2]))
                         .build())
-                .collect(Collectors.toList());
+                .toList();
     }
 
     @Override
+    @Transactional(readOnly = true)
     public InventoryValueReport getInventoryValue() {
 
-        List<com.devkanyanta.pos.product.ProductEntity> products = productRepository.findAll();
+        List<ProductEntity> products = productRepository.findAll();
 
         long totalProducts = products.size();
-        BigDecimal totalStockValue = BigDecimal.ZERO;
-        BigDecimal totalSellingValue = BigDecimal.ZERO;
-        List<LowStockItem> lowStockItems = new java.util.ArrayList<>();
+        BigDecimal totalStockValue = Money.ZERO;
+        BigDecimal totalSellingValue = Money.ZERO;
+        List<LowStockItem> lowStockItems = new ArrayList<>();
 
-        for (com.devkanyanta.pos.product.ProductEntity product : products) {
-            if (product.getTrackInventory() && product.getStockQuantity() != null) {
-                BigDecimal qty = BigDecimal.valueOf(product.getStockQuantity());
+        for (ProductEntity product : products) {
+            if (Boolean.TRUE.equals(product.getTrackInventory()) && product.getStockQuantity() != null) {
+                BigDecimal qty = BigDecimal.valueOf(Math.max(0, product.getStockQuantity()));
 
                 if (product.getCostPrice() != null) {
-                    totalStockValue = totalStockValue.add(
-                            product.getCostPrice().multiply(qty)
-                    );
+                    totalStockValue = totalStockValue.add(product.getCostPrice().multiply(qty));
                 }
 
-                totalSellingValue = totalSellingValue.add(
-                        product.getPrice().multiply(qty)
-                );
+                totalSellingValue = totalSellingValue.add(product.getPrice().multiply(qty));
 
-                if (product.getStockQuantity() <= 5) {
+                int threshold = product.getReorderLevel() != null
+                        ? product.getReorderLevel()
+                        : properties.getLowStockThreshold();
+
+                if (!Boolean.FALSE.equals(product.getActive()) && product.getStockQuantity() <= threshold) {
                     lowStockItems.add(LowStockItem.builder()
+                            .productId(product.getId())
                             .productName(product.getName())
                             .stockQuantity(product.getStockQuantity())
+                            .reorderLevel(threshold)
                             .build());
                 }
             }
@@ -181,9 +192,35 @@ public class ReportServiceImpl implements ReportService {
 
         return InventoryValueReport.builder()
                 .totalProducts(totalProducts)
-                .totalStockValue(totalStockValue)
-                .totalSellingValue(totalSellingValue)
+                .totalStockValue(Money.of(totalStockValue))
+                .totalSellingValue(Money.of(totalSellingValue))
                 .lowStockItems(lowStockItems)
                 .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public TodaySummary getTodaySummary() {
+
+        LocalDate today = LocalDate.now(clock);
+        LocalDateTime start = today.atStartOfDay();
+        LocalDateTime end = today.plusDays(1).atStartOfDay();
+
+        Map<String, BigDecimal> byMethod = new LinkedHashMap<>();
+        paymentRepository.findReceivedBetween(start, end)
+                .forEach(p -> byMethod.merge(p.getPaymentMethod().getName(), p.getAmount(), BigDecimal::add));
+
+        return TodaySummary.builder()
+                .date(today)
+                .salesCount(saleRepository.countSalesBetween(start, end))
+                .totalSales(Money.of(saleRepository.totalRevenueBetween(start, end)))
+                .receivedByMethod(byMethod)
+                .build();
+    }
+
+    private static void validateRange(LocalDate from, LocalDate to) {
+        if (from.isAfter(to)) {
+            throw new BadRequestException("'from' must not be after 'to'");
+        }
     }
 }

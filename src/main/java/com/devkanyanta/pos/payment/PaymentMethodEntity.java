@@ -24,4 +24,16 @@ public class PaymentMethodEntity {
 
     @Builder.Default
     private Boolean isActive = true;
+
+    /** Tender category. Cash allows change; mobile money requires a reference. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private PaymentMethodType type;
+
+    /** Whether a transaction reference (e.g. mobile money confirmation code) is mandatory. */
+    private Boolean requiresReference;
+
+    /** ZRA VSDC payment type code (pmtTyCd), e.g. 01 cash, 05 card, 06 mobile money. */
+    @Column(length = 4)
+    private String zraPaymentTypeCode;
 }

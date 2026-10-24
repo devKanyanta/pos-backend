@@ -9,6 +9,10 @@ import com.devkanyanta.pos.customer.dto.CreateCustomerRequest;
 import com.devkanyanta.pos.customer.dto.CustomerResponse;
 import com.devkanyanta.pos.customer.dto.UpdateCustomerRequest;
 
+import com.devkanyanta.pos.shared.exception.BadRequestException;
+import com.devkanyanta.pos.shared.exception.ConflictException;
+import com.devkanyanta.pos.shared.exception.NotFoundException;
+
 import lombok.RequiredArgsConstructor;
 
 @Service
@@ -17,6 +21,8 @@ public class CustomerServiceImpl implements CustomerService {
 
     private final CustomerRepository customerRepository;
 
+    private final com.devkanyanta.pos.sale.SaleRepository saleRepository;
+
     @Override
     public CustomerResponse createCustomer(CreateCustomerRequest request) {
 
@@ -24,12 +30,12 @@ public class CustomerServiceImpl implements CustomerService {
 
         if (StringUtils.hasText(request.getPhone())
                 && customerRepository.existsByPhone(request.getPhone())) {
-            throw new RuntimeException("Customer phone number already exists");
+            throw new ConflictException("Customer phone number already exists");
         }
 
         if (StringUtils.hasText(request.getEmail())
                 && customerRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Customer email already exists");
+            throw new ConflictException("Customer email already exists");
         }
 
         CustomerEntity customer = CustomerEntity.builder()
@@ -77,7 +83,7 @@ public class CustomerServiceImpl implements CustomerService {
 
             if (StringUtils.hasText(request.getPhone())
                     && customerRepository.existsByPhone(request.getPhone())) {
-                throw new RuntimeException("Customer phone number already exists");
+                throw new ConflictException("Customer phone number already exists");
             }
             customer.setPhone(request.getPhone());
         }
@@ -87,7 +93,7 @@ public class CustomerServiceImpl implements CustomerService {
 
             if (StringUtils.hasText(request.getEmail())
                     && customerRepository.existsByEmail(request.getEmail())) {
-                throw new RuntimeException("Customer email already exists");
+                throw new ConflictException("Customer email already exists");
             }
             customer.setEmail(request.getEmail());
         }
@@ -111,7 +117,7 @@ public class CustomerServiceImpl implements CustomerService {
     public CustomerResponse searchByPhone(String phone) {
 
         CustomerEntity customer = customerRepository.findByPhone(phone)
-                .orElseThrow(() -> new RuntimeException("Customer not found with phone: " + phone));
+                .orElseThrow(() -> new NotFoundException("Customer not found with phone: " + phone));
 
         return toResponse(customer);
     }
@@ -120,24 +126,32 @@ public class CustomerServiceImpl implements CustomerService {
     public void deleteCustomer(Long id) {
 
         CustomerEntity customer = findCustomerById(id);
+
+        // Customers with sales history are deactivated, not deleted.
+        if (saleRepository.existsByCustomerId(id)) {
+            customer.setIsActive(false);
+            customerRepository.save(customer);
+            return;
+        }
+
         customerRepository.delete(customer);
     }
 
     private CustomerEntity findCustomerById(Long id) {
 
         return customerRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Customer not found"));
+                .orElseThrow(() -> new NotFoundException("Customer not found"));
     }
 
     private void validateCreateRequest(CreateCustomerRequest request) {
 
         if (request == null) {
-            throw new RuntimeException("Customer request is required");
+            throw new BadRequestException("Customer request is required");
         }
 
         if (!StringUtils.hasText(request.getPhone())
                 && !StringUtils.hasText(request.getEmail())) {
-            throw new RuntimeException("Either phone number or email is required");
+            throw new BadRequestException("Either phone number or email is required");
         }
     }
 

@@ -9,6 +9,10 @@ import com.devkanyanta.pos.branch.dto.BranchResponse;
 import com.devkanyanta.pos.branch.dto.CreateBranchRequest;
 import com.devkanyanta.pos.branch.dto.UpdateBranchRequest;
 
+import com.devkanyanta.pos.shared.exception.BadRequestException;
+import com.devkanyanta.pos.shared.exception.ConflictException;
+import com.devkanyanta.pos.shared.exception.NotFoundException;
+
 import lombok.RequiredArgsConstructor;
 
 @Service
@@ -23,7 +27,7 @@ public class BranchServiceImpl implements BranchService {
         validateCreateRequest(request);
 
         if (branchRepository.existsByName(request.getName())) {
-            throw new RuntimeException("Branch name already exists");
+            throw new ConflictException("Branch name already exists");
         }
 
         BranchEntity branch = BranchEntity.builder()
@@ -60,7 +64,7 @@ public class BranchServiceImpl implements BranchService {
         if (StringUtils.hasText(request.getName())) {
             if (!request.getName().equals(branch.getName())
                     && branchRepository.existsByName(request.getName())) {
-                throw new RuntimeException("Branch name already exists");
+                throw new ConflictException("Branch name already exists");
             }
             branch.setName(request.getName());
         }
@@ -98,21 +102,21 @@ public class BranchServiceImpl implements BranchService {
     private BranchEntity findBranchById(Long id) {
 
         return branchRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Branch not found"));
+                .orElseThrow(() -> new NotFoundException("Branch not found"));
     }
 
     private void validateCreateRequest(CreateBranchRequest request) {
 
         if (request == null || !StringUtils.hasText(request.getName())) {
-            throw new RuntimeException("Branch name is required");
+            throw new BadRequestException("Branch name is required");
         }
 
         if (!StringUtils.hasText(request.getZraTpin())) {
-            throw new RuntimeException("ZRA TPIN is required");
+            throw new BadRequestException("ZRA TPIN is required");
         }
 
         if (request.getZraTpin().length() != 10 || !request.getZraTpin().matches("\\d+")) {
-            throw new RuntimeException("ZRA TPIN must be a 10-digit numeric value");
+            throw new BadRequestException("ZRA TPIN must be a 10-digit numeric value");
         }
     }
 

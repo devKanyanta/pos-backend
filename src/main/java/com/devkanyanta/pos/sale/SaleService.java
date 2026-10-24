@@ -17,9 +17,13 @@ public interface SaleService {
 
     SaleResponse getSaleByNumber(String saleNumber);
 
-    SaleResponse voidSale(Long id);
+    SaleResponse voidSale(Long id, String username);
 
-    SaleResponse refundSale(Long id, RefundRequest request);
+    SaleResponse refundSale(Long id, RefundRequest request, String username);
 
     List<SaleResponse> getSalesByDateRange(LocalDate from, LocalDate to);
+
+    List<SaleResponse> getSalesNeedingReview();
+
+    SaleResponse markReviewed(Long id, String username);
 }

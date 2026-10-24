@@ -28,4 +28,22 @@ public class UpdateProductRequest {
     private Boolean trackInventory;
 
     private Long categoryId;
+
+    private Integer reorderLevel;
+
+    /** ZRA VAT category: A, B, C1, C2, C3, D, E or RVAT. */
+    private String zraTaxType;
+
+    private String zraItemCode;
+
+    private String zraItemClassCode;
+
+    /** 1 = raw material, 2 = finished product, 3 = service. */
+    private String zraItemTypeCode;
+
+    private String zraOriginCountryCode;
+
+    private String zraPackagingUnitCode;
+
+    private String zraQuantityUnitCode;
 }

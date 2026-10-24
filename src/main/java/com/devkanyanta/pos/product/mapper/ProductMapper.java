@@ -5,9 +5,15 @@ import org.springframework.stereotype.Component;
 import com.devkanyanta.pos.category.CategoryEntity;
 import com.devkanyanta.pos.product.ProductEntity;
 import com.devkanyanta.pos.product.dto.ProductResponse;
+import com.devkanyanta.pos.shared.config.PosProperties;
+
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class ProductMapper {
+
+    private final PosProperties properties;
 
     public ProductResponse toResponse(ProductEntity product) {
 
@@ -26,6 +32,31 @@ public class ProductMapper {
                 .trackInventory(product.getTrackInventory())
                 .categoryId(category != null ? category.getId() : null)
                 .categoryName(category != null ? category.getName() : null)
+                .reorderLevel(product.getReorderLevel())
+                .lowStock(isLowStock(product))
+                .zraTaxType(product.getZraTaxType() != null ? product.getZraTaxType().getCode() : null)
+                .zraItemCode(product.getZraItemCode())
+                .zraItemClassCode(product.getZraItemClassCode())
+                .zraItemTypeCode(product.getZraItemTypeCode())
+                .zraOriginCountryCode(product.getZraOriginCountryCode())
+                .zraPackagingUnitCode(product.getZraPackagingUnitCode())
+                .zraQuantityUnitCode(product.getZraQuantityUnitCode())
+                .zraMapped(product.isZraMapped())
+                .zraRegistered(Boolean.TRUE.equals(product.getZraRegistered()))
+                .updatedAt(product.getUpdatedAt())
                 .build();
+    }
+
+    public boolean isLowStock(ProductEntity product) {
+
+        if (!Boolean.TRUE.equals(product.getTrackInventory()) || Boolean.FALSE.equals(product.getActive())) {
+            return false;
+        }
+
+        int threshold = product.getReorderLevel() != null
+                ? product.getReorderLevel()
+                : properties.getLowStockThreshold();
+
+        return product.getStockQuantity() != null && product.getStockQuantity() <= threshold;
     }
 }

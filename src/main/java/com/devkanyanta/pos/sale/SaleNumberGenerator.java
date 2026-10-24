@@ -23,6 +23,10 @@ public class SaleNumberGenerator {
         return generateNumber("RCT");
     }
 
+    public String generateRefundNumber() {
+        return generateNumber("CRN");
+    }
+
     private String generateNumber(String prefix) {
 
         String datePart = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));

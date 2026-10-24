@@ -9,4 +9,6 @@ public interface InventoryMovementRepository extends JpaRepository<InventoryMove
     List<InventoryMovementEntity> findByProductIdOrderByCreatedAtDesc(Long productId);
 
     List<InventoryMovementEntity> findAllByOrderByCreatedAtDesc();
+
+    boolean existsByProductId(Long productId);
 }

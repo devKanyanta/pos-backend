@@ -26,7 +26,7 @@ dependencies {
     implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
-	runtimeOnly 'org.mariadb.jdbc:mariadb-java-client'
+	runtimeOnly 'org.postgresql:postgresql'
 	compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
@@ -34,8 +34,23 @@ dependencies {
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// Local development: bring up the project-local PostgreSQL (see scripts/dev-db.sh)
+// before the app or the tests run, so './gradlew bootRun' works out of the box.
+// The script is idempotent and a no-op when the database is already running.
+tasks.register('devDbStart', Exec) {
+	group = 'application'
+	description = 'Starts the local development PostgreSQL if it is not running.'
+	workingDir = projectDir
+	commandLine 'bash', file('scripts/dev-db.sh').absolutePath, 'start'
+}
+
+tasks.named('bootRun') {
+	dependsOn 'devDbStart'
+}
+
 tasks.named('test') {
 	useJUnitPlatform()
+	dependsOn 'devDbStart'
 }
 
 tasks.named('jar') {

@@ -14,4 +14,10 @@ public class PaymentMethodResponse {
     private String code;
 
     private Boolean isActive;
+
+    private String type;
+
+    private Boolean requiresReference;
+
+    private String zraPaymentTypeCode;
 }

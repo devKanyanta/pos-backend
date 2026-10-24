@@ -1,23 +1,22 @@
 services:
 
-  mariadb:
-    image: mariadb:12
+  postgres:
+    image: postgres:17
 
-    container_name: pos-mariadb
+    container_name: pos-postgres
 
     restart: always
 
     environment:
-      MARIADB_ROOT_PASSWORD: mapalo
-      MARIADB_DATABASE: posdb
-      MARIADB_USER: mapalo
-      MARIADB_PASSWORD: mapalo
+      POSTGRES_DB: posdb
+      POSTGRES_USER: mapalo
+      POSTGRES_PASSWORD: mapalo
 
     ports:
-      - "3307:3306"
+      - "5433:5432"
 
     volumes:
-      - mariadb_data:/var/lib/mysql
+      - postgres_data:/var/lib/postgresql/data
   # pos-api:
   #   image: gradle:jdk25
 
@@ -28,15 +27,15 @@ services:
   #   restart: always
 
   #   ports:
-  #     - "8080:8080"
+  #     - "8081:8081"
 
   #   depends_on:
-  #     - mariadb
+  #     - postgres
 
   #   environment:
-  #     SPRING_DATASOURCE_URL: jdbc:mariadb://mariadb:3306/posdb
-  #     SPRING_DATASOURCE_USERNAME: mapalo
-  #     SPRING_DATASOURCE_PASSWORD: mapalo
+  #     DB_URL: jdbc:postgresql://postgres:5432/posdb
+  #     DB_USERNAME: mapalo
+  #     DB_PASSWORD: mapalo
 
   #   volumes:
   #     - .:/app
@@ -48,5 +47,5 @@ services:
   #   command: sh -c "./gradlew classes --continuous & ./gradlew bootRun"
 
 volumes:
-  mariadb_data:
+  postgres_data:
   # gradle_cache:

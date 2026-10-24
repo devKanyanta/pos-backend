@@ -21,6 +21,7 @@ public class UserController {
     private final UserService userService;
 
     @PostMapping
+    @PreAuthorize("hasAuthority('" + PermissionConstants.USER_CREATE + "')")
     @ResponseStatus(HttpStatus.CREATED)
     public UserResponse createUser(
             @RequestBody CreateUserRequest request
@@ -29,11 +30,13 @@ public class UserController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAuthority('" + PermissionConstants.USER_VIEW + "')")
     public List<UserResponse> getAllUsers() {
         return userService.getAllUsers();
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.USER_VIEW + "')")
     public UserResponse getUserById(
             @PathVariable Long id
     ) {

@@ -56,7 +56,16 @@ public class AuthorizationDataSeeder {
                     PermissionConstants.RECEIPT_VIEW,
                     PermissionConstants.RECEIPT_REPRINT,
                     PermissionConstants.ZRA_VIEW,
-                    PermissionConstants.REPORT_VIEW
+                    PermissionConstants.ZRA_MANAGE,
+                    PermissionConstants.REPORT_VIEW,
+                    PermissionConstants.PRODUCT_IMPORT,
+                    PermissionConstants.SYNC_DEVICE,
+                    PermissionConstants.DEVICE_MANAGE,
+                    PermissionConstants.RECONCILIATION_VIEW,
+                    PermissionConstants.RECONCILIATION_MANAGE,
+                    PermissionConstants.MERCHANT_MANAGE,
+                    PermissionConstants.SUPPORT_MANAGE,
+                    PermissionConstants.WHATSAPP_SEND
             );
 
             permissionNames.forEach(permissionName -> permissionRepository.findByName(permissionName)
@@ -99,7 +108,14 @@ public class AuthorizationDataSeeder {
                             PermissionConstants.RECEIPT_VIEW,
                             PermissionConstants.RECEIPT_REPRINT,
                             PermissionConstants.REPORT_VIEW,
-                            PermissionConstants.PAYMENT_METHOD_VIEW
+                            PermissionConstants.PAYMENT_METHOD_VIEW,
+                            PermissionConstants.ZRA_VIEW,
+                            PermissionConstants.PRODUCT_IMPORT,
+                            PermissionConstants.SYNC_DEVICE,
+                            PermissionConstants.DEVICE_MANAGE,
+                            PermissionConstants.RECONCILIATION_VIEW,
+                            PermissionConstants.RECONCILIATION_MANAGE,
+                            PermissionConstants.WHATSAPP_SEND
                     ),
                     permissionRepository,
                     roleRepository
@@ -119,7 +135,9 @@ public class AuthorizationDataSeeder {
                             PermissionConstants.RECEIPT_VIEW,
                             PermissionConstants.RECEIPT_REPRINT,
                             PermissionConstants.INVENTORY_VIEW,
-                            PermissionConstants.PAYMENT_METHOD_VIEW
+                            PermissionConstants.PAYMENT_METHOD_VIEW,
+                            PermissionConstants.SYNC_DEVICE,
+                            PermissionConstants.WHATSAPP_SEND
                     ),
                     permissionRepository,
                     roleRepository

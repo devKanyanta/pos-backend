@@ -1,11 +1,12 @@
 package com.devkanyanta.pos.receipt;
 
-import java.util.Optional;
-
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.devkanyanta.pos.receipt.dto.ReceiptResponse;
+import com.devkanyanta.pos.shared.exception.NotFoundException;
+import com.devkanyanta.pos.zra.ZraSubmissionEntity.SubmissionType;
+import com.devkanyanta.pos.zra.ZraSubmissionRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -15,20 +16,24 @@ public class ReceiptServiceImpl implements ReceiptService {
 
     private final ReceiptRepository receiptRepository;
 
+    private final ZraSubmissionRepository zraSubmissionRepository;
+
     @Override
+    @Transactional(readOnly = true)
     public ReceiptResponse getReceiptById(Long id) {
 
         ReceiptEntity receipt = receiptRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Receipt not found"));
+                .orElseThrow(() -> new NotFoundException("Receipt not found"));
 
         return toResponse(receipt);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public ReceiptResponse getReceiptBySaleId(Long saleId) {
 
         ReceiptEntity receipt = receiptRepository.findBySaleId(saleId)
-                .orElseThrow(() -> new RuntimeException("Receipt not found for sale: " + saleId));
+                .orElseThrow(() -> new NotFoundException("Receipt not found for sale: " + saleId));
 
         return toResponse(receipt);
     }
@@ -38,7 +43,7 @@ public class ReceiptServiceImpl implements ReceiptService {
     public ReceiptResponse reprintReceipt(Long id) {
 
         ReceiptEntity receipt = receiptRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Receipt not found"));
+                .orElseThrow(() -> new NotFoundException("Receipt not found"));
 
         receipt.setPrintedCount(receipt.getPrintedCount() + 1);
         receiptRepository.save(receipt);
@@ -48,6 +53,11 @@ public class ReceiptServiceImpl implements ReceiptService {
 
     private ReceiptResponse toResponse(ReceiptEntity receipt) {
 
+        String zraStatus = zraSubmissionRepository
+                .findFirstBySaleIdAndSubmissionTypeOrderByIdDesc(receipt.getSale().getId(), SubmissionType.SALE_INVOICE)
+                .map(submission -> submission.getSubmissionStatus().name())
+                .orElse(null);
+
         return ReceiptResponse.builder()
                 .id(receipt.getId())
                 .saleId(receipt.getSale().getId())
@@ -55,6 +65,18 @@ public class ReceiptServiceImpl implements ReceiptService {
                 .receiptNumber(receipt.getReceiptNumber())
                 .printedCount(receipt.getPrintedCount())
                 .createdAt(receipt.getCreatedAt())
+                .totalAmount(receipt.getSale().getTotalAmount())
+                .vatAmount(receipt.getSale().getVatAmount())
+                .zraStatus(zraStatus)
+                .zraVerified(receipt.isZraSigned())
+                .zraInvoiceNo(receipt.getZraInvoiceNo())
+                .zraReceiptNo(receipt.getZraReceiptNo())
+                .zraInternalData(receipt.getZraInternalData())
+                .zraReceiptSignature(receipt.getZraReceiptSignature())
+                .zraSdcId(receipt.getZraSdcId())
+                .zraMrcNo(receipt.getZraMrcNo())
+                .zraQrCodeUrl(receipt.getZraQrCodeUrl())
+                .zraReceiptDate(receipt.getZraReceiptDate())
                 .build();
     }
 }

@@ -3,14 +3,19 @@ package com.devkanyanta.pos.product;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
+import org.springframework.transaction.annotation.Transactional;
 
-import com.devkanyanta.pos.category.CategoryEntity;
-import com.devkanyanta.pos.category.CategoryRepository;
+import com.devkanyanta.pos.inventory.InventoryMovementEntity.MovementType;
+import com.devkanyanta.pos.inventory.InventoryMovementRepository;
+import com.devkanyanta.pos.inventory.StockLedger;
 import com.devkanyanta.pos.product.dto.CreateProductRequest;
 import com.devkanyanta.pos.product.dto.ProductResponse;
 import com.devkanyanta.pos.product.dto.UpdateProductRequest;
 import com.devkanyanta.pos.product.mapper.ProductMapper;
+import com.devkanyanta.pos.sale.SaleItemRepository;
+import com.devkanyanta.pos.shared.config.PosProperties;
+import com.devkanyanta.pos.shared.exception.NotFoundException;
+import com.devkanyanta.pos.shared.security.CurrentUser;
 
 import lombok.RequiredArgsConstructor;
 
@@ -20,33 +25,40 @@ public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
 
-    private final CategoryRepository categoryRepository;
+    private final ProductRules productRules;
 
     private final ProductMapper productMapper;
 
+    private final StockLedger stockLedger;
+
+    private final SaleItemRepository saleItemRepository;
+
+    private final InventoryMovementRepository inventoryMovementRepository;
+
+    private final PosProperties properties;
+
     @Override
+    @Transactional
     public ProductResponse createProduct(CreateProductRequest request) {
 
-        validateCreateRequest(request);
-        validateUniqueFields(request.getBarcode(), request.getSku(), null);
+        ProductEntity product = productRules.buildNew(request);
 
-        ProductEntity product = ProductEntity.builder()
-                .name(request.getName())
-                .barcode(request.getBarcode())
-                .sku(request.getSku())
-                .price(request.getPrice())
-                .costPrice(request.getCostPrice())
-                .stockQuantity(request.getStockQuantity())
-                .active(Boolean.TRUE)
-                .vatRate(request.getVatRate() != null ? request.getVatRate() : new java.math.BigDecimal("16.00"))
-                .trackInventory(request.getTrackInventory() != null ? request.getTrackInventory() : true)
-                .category(resolveCategory(request.getCategoryId()))
-                .build();
+        int openingStock = product.getStockQuantity();
+        product.setStockQuantity(0);
+        product = productRepository.save(product);
 
-        return productMapper.toResponse(productRepository.save(product));
+        if (Boolean.TRUE.equals(product.getTrackInventory()) && openingStock > 0) {
+            stockLedger.record(product, MovementType.RESTOCK, openingStock,
+                    product.getId(), "PRODUCT_CREATE", "Opening stock", CurrentUser.username());
+        } else {
+            product.setStockQuantity(openingStock);
+        }
+
+        return productMapper.toResponse(product);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<ProductResponse> getAllProducts() {
 
         return productRepository.findAll()
@@ -56,173 +68,70 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public ProductResponse getProductById(Long id) {
 
         return productMapper.toResponse(findProductById(id));
     }
 
     @Override
+    @Transactional
     public ProductResponse updateProduct(Long id, UpdateProductRequest request) {
+
+        ProductEntity product = productRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new NotFoundException("Product not found"));
+
+        int stockBefore = product.getStockQuantity() != null ? product.getStockQuantity() : 0;
+
+        productRules.applyUpdate(product, request);
+
+        int stockAfter = product.getStockQuantity() != null ? product.getStockQuantity() : 0;
+        int delta = stockAfter - stockBefore;
+
+        if (delta != 0) {
+            // Route the change through the ledger so it is recorded as an ADJUSTMENT movement.
+            product.setStockQuantity(stockBefore);
+            stockLedger.record(product, MovementType.ADJUSTMENT, delta,
+                    product.getId(), "PRODUCT_UPDATE", "Stock set via product update", CurrentUser.username());
+        } else {
+            productRepository.save(product);
+        }
+
+        return productMapper.toResponse(product);
+    }
+
+    /**
+     * Products that appear in sales or the stock audit trail are deactivated instead of deleted,
+     * so historical records (and offline device caches) stay consistent.
+     */
+    @Override
+    @Transactional
+    public void deleteProduct(Long id) {
 
         ProductEntity product = findProductById(id);
 
-        validateUpdateRequest(request);
-        validateUniqueFields(request.getBarcode(), request.getSku(), id);
-
-        if (request.getName() != null) {
-            product.setName(request.getName());
-        }
-        if (request.getBarcode() != null) {
-            product.setBarcode(request.getBarcode());
-        }
-        if (request.getSku() != null) {
-            product.setSku(request.getSku());
+        if (saleItemRepository.existsByProductId(id) || inventoryMovementRepository.existsByProductId(id)) {
+            product.setActive(false);
+            productRepository.save(product);
+            return;
         }
 
-        if (request.getPrice() != null) {
-            product.setPrice(request.getPrice());
-        }
-        if (request.getCostPrice() != null) {
-            product.setCostPrice(request.getCostPrice());
-        }
-
-        if (request.getStockQuantity() != null) {
-            product.setStockQuantity(request.getStockQuantity());
-        }
-
-        if (request.getActive() != null) {
-            product.setActive(request.getActive());
-        }
-
-        if (request.getVatRate() != null) {
-            product.setVatRate(request.getVatRate());
-        }
-
-        if (request.getTrackInventory() != null) {
-            product.setTrackInventory(request.getTrackInventory());
-        }
-
-        if (request.getCategoryId() != null) {
-            product.setCategory(resolveCategory(request.getCategoryId()));
-        }
-
-        return productMapper.toResponse(productRepository.save(product));
+        productRepository.delete(product);
     }
 
     @Override
-    public void deleteProduct(Long id) {
+    @Transactional(readOnly = true)
+    public List<ProductResponse> getLowStockProducts() {
 
-        productRepository.delete(findProductById(id));
+        return productRepository.findLowStock(properties.getLowStockThreshold())
+                .stream()
+                .map(productMapper::toResponse)
+                .toList();
     }
 
     private ProductEntity findProductById(Long id) {
 
         return productRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Product not found"));
-    }
-
-    private CategoryEntity resolveCategory(Long categoryId) {
-
-        if (categoryId == null) {
-            return null;
-        }
-
-        return categoryRepository.findById(categoryId)
-                .orElseThrow(() -> new RuntimeException("Category not found"));
-    }
-
-    private void validateUniqueFields(String barcode, String sku, Long productId) {
-
-        if (barcode != null) {
-            productRepository.findByBarcode(barcode)
-                    .filter(existingProduct -> !existingProduct.getId().equals(productId))
-                    .ifPresent(existingProduct -> {
-                        throw new RuntimeException("Product barcode already exists");
-                    });
-        }
-
-        if (sku != null) {
-            productRepository.findBySku(sku)
-                    .filter(existingProduct -> !existingProduct.getId().equals(productId))
-                    .ifPresent(existingProduct -> {
-                        throw new RuntimeException("Product SKU already exists");
-                    });
-        }
-    }
-
-    private void validateCreateRequest(CreateProductRequest request) {
-
-        if (request == null) {
-            throw new RuntimeException("Product request is required");
-        }
-
-        validateName(request.getName());
-        validatePrice(request.getPrice());
-        validateCostPrice(request.getCostPrice());
-        validateStockQuantity(request.getStockQuantity());
-        validateVatRate(request.getVatRate());
-    }
-
-    private void validateUpdateRequest(UpdateProductRequest request) {
-
-        if (request == null) {
-            throw new RuntimeException("Product request is required");
-        }
-
-        if (request.getName() != null) {
-            validateName(request.getName());
-        }
-        if (request.getPrice() != null) {
-            validatePrice(request.getPrice());
-        }
-        if (request.getCostPrice() != null) {
-            validateCostPrice(request.getCostPrice());
-        }
-        if (request.getStockQuantity() != null) {
-            validateStockQuantity(request.getStockQuantity());
-        }
-    }
-
-    private void validateName(String name) {
-
-        if (!StringUtils.hasText(name)) {
-            throw new RuntimeException("Product name is required");
-        }
-    }
-
-    private void validatePrice(java.math.BigDecimal price) {
-
-        if (price == null) {
-            throw new RuntimeException("Product price is required");
-        }
-
-        if (price.signum() < 0) {
-            throw new RuntimeException("Product price cannot be negative");
-        }
-    }
-
-    private void validateCostPrice(java.math.BigDecimal costPrice) {
-
-        if (costPrice != null && costPrice.signum() < 0) {
-            throw new RuntimeException("Product cost price cannot be negative");
-        }
-    }
-
-    private void validateStockQuantity(Integer stockQuantity) {
-
-        if (stockQuantity == null) {
-            throw new RuntimeException("Product stock quantity is required");
-        }
-
-        if (stockQuantity < 0) {
-            throw new RuntimeException("Product stock quantity cannot be negative");
-        }
-    }
-
-    private void validateVatRate(java.math.BigDecimal vatRate) {
-
-        if (vatRate != null && vatRate.signum() < 0) {
-            throw new RuntimeException("VAT rate cannot be negative");
-        }
+                .orElseThrow(() -> new NotFoundException("Product not found"));
     }
 }

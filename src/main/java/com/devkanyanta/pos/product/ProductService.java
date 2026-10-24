@@ -17,4 +17,6 @@ public interface ProductService {
     ProductResponse updateProduct(Long id, UpdateProductRequest request);
 
     void deleteProduct(Long id);
+
+    List<ProductResponse> getLowStockProducts();
 }

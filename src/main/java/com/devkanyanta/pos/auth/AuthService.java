@@ -8,8 +8,15 @@ import org.springframework.security.authentication.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+
 import com.devkanyanta.pos.auth.dto.*;
 import com.devkanyanta.pos.auth.jwt.JwtService;
+import com.devkanyanta.pos.merchant.MerchantProfileService;
+import com.devkanyanta.pos.shared.exception.BadRequestException;
+import com.devkanyanta.pos.shared.exception.ConflictException;
+import com.devkanyanta.pos.shared.exception.NotFoundException;
 import com.devkanyanta.pos.user.role.RoleEntity;
 import com.devkanyanta.pos.user.role.RoleRepository;
 import com.devkanyanta.pos.user.UserEntity;
@@ -31,23 +38,50 @@ public class AuthService {
 
     private final PasswordEncoder passwordEncoder;
 
+    private final MerchantProfileService merchantProfileService;
+
+    /**
+     * Self-registration. The very first account on a fresh installation becomes ADMIN so the
+     * owner can set the shop up; later self-registered accounts are CASHIERs. On the MICRO plan
+     * only one user is allowed.
+     */
+    @Transactional
     public AuthResponse register(RegisterRequest request) {
 
+        if (request == null
+                || !StringUtils.hasText(request.getUsername())
+                || !StringUtils.hasText(request.getPassword())
+                || !StringUtils.hasText(request.getEmail())) {
+            throw new BadRequestException("Username, email and password are required");
+        }
+
+        if (request.getPassword().length() < 6) {
+            throw new BadRequestException("Password must be at least 6 characters");
+        }
+
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email already exists");
+            throw new ConflictException("Email already exists");
         }
 
         if (userRepository.existsByUsername(request.getUsername())) {
-            throw new RuntimeException("Username already exists");
+            throw new ConflictException("Username already exists");
         }
 
-        RoleEntity cashierRole = roleRepository.findByName("CASHIER")
+        boolean firstUser = userRepository.count() == 0;
+
+        if (!firstUser) {
+            merchantProfileService.requireFeature(MerchantProfileService.FEATURE_MULTI_USER, "Additional users");
+        }
+
+        String roleName = firstUser ? "ADMIN" : "CASHIER";
+
+        RoleEntity defaultRole = roleRepository.findByName(roleName)
                 .orElseThrow(() ->
-                        new RuntimeException("Default role not found"));
+                        new NotFoundException("Default role not found: " + roleName));
 
         Set<RoleEntity> roles = new HashSet<>();
 
-        roles.add(cashierRole);
+        roles.add(defaultRole);
 
         UserEntity user = UserEntity.builder()
                 .firstName(request.getFirstName())
@@ -76,6 +110,12 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) {
+
+        if (request == null
+                || !StringUtils.hasText(request.getUsername())
+                || !StringUtils.hasText(request.getPassword())) {
+            throw new BadRequestException("Username and password are required");
+        }
 
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(

@@ -8,5 +8,9 @@ public interface ZraSubmissionService {
 
     List<ZraSubmissionResponse> getAllSubmissions();
 
+    List<ZraSubmissionResponse> getSubmissionsByStatus(String status);
+
     ZraSubmissionResponse getSubmissionById(Long id);
+
+    void resetForRetry(Long id);
 }

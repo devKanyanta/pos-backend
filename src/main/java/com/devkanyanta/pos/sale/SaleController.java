@@ -59,9 +59,10 @@ public class SaleController {
     @PreAuthorize("hasAuthority('" + PermissionConstants.SALE_VOID + "')")
     @ResponseStatus(HttpStatus.OK)
     public SaleResponse voidSale(
-            @PathVariable Long id
+            @PathVariable Long id,
+            Authentication authentication
     ) {
-        return saleService.voidSale(id);
+        return saleService.voidSale(id, username(authentication));
     }
 
     @PostMapping("/{id}/refund")
@@ -69,9 +70,27 @@ public class SaleController {
     @ResponseStatus(HttpStatus.OK)
     public SaleResponse refundSale(
             @PathVariable Long id,
-            @RequestBody RefundRequest request
+            @RequestBody(required = false) RefundRequest request,
+            Authentication authentication
     ) {
-        return saleService.refundSale(id, request);
+        return saleService.refundSale(id, request != null ? request : new RefundRequest(), username(authentication));
+    }
+
+    /** Offline-synced sales flagged with conflicts (negative stock, price mismatch, ...). */
+    @GetMapping("/needs-review")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.DEVICE_MANAGE + "')")
+    public List<SaleResponse> getSalesNeedingReview() {
+        return saleService.getSalesNeedingReview();
+    }
+
+    /** Marks a flagged sale as reviewed by a manager. */
+    @PostMapping("/{id}/review")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.DEVICE_MANAGE + "')")
+    public SaleResponse markReviewed(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+        return saleService.markReviewed(id, username(authentication));
     }
 
     @GetMapping("/date-range")
@@ -81,5 +100,9 @@ public class SaleController {
             @RequestParam("to") LocalDate to
     ) {
         return saleService.getSalesByDateRange(from, to);
+    }
+
+    private static String username(Authentication authentication) {
+        return authentication != null ? authentication.getName() : "system";
     }
 }

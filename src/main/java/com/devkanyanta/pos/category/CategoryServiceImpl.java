@@ -9,6 +9,10 @@ import com.devkanyanta.pos.category.dto.CategoryResponse;
 import com.devkanyanta.pos.category.dto.CreateCategoryRequest;
 import com.devkanyanta.pos.product.ProductRepository;
 
+import com.devkanyanta.pos.shared.exception.BadRequestException;
+import com.devkanyanta.pos.shared.exception.ConflictException;
+import com.devkanyanta.pos.shared.exception.NotFoundException;
+
 import lombok.RequiredArgsConstructor;
 
 @Service
@@ -67,7 +71,7 @@ public class CategoryServiceImpl implements CategoryService {
         CategoryEntity category = findCategoryById(id);
 
         if (productRepository.existsByCategoryId(id)) {
-            throw new RuntimeException("Category cannot be deleted while products are assigned to it");
+            throw new ConflictException("Category cannot be deleted while products are assigned to it");
         }
 
         categoryRepository.delete(category);
@@ -76,7 +80,7 @@ public class CategoryServiceImpl implements CategoryService {
     private CategoryEntity findCategoryById(Long id) {
 
         return categoryRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Category not found"));
+                .orElseThrow(() -> new NotFoundException("Category not found"));
     }
 
     private void validateCategoryName(String name, Long categoryId) {
@@ -84,14 +88,14 @@ public class CategoryServiceImpl implements CategoryService {
         categoryRepository.findByName(name)
                 .filter(existingCategory -> !existingCategory.getId().equals(categoryId))
                 .ifPresent(existingCategory -> {
-                    throw new RuntimeException("Category name already exists");
+                    throw new ConflictException("Category name already exists");
                 });
     }
 
     private void validateRequest(CreateCategoryRequest request) {
 
         if (request == null || !StringUtils.hasText(request.getName())) {
-            throw new RuntimeException("Category name is required");
+            throw new BadRequestException("Category name is required");
         }
     }
 

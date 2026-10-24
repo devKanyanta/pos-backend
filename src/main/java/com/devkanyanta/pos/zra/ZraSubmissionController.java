@@ -17,10 +17,16 @@ public class ZraSubmissionController {
 
     private final ZraSubmissionService zraSubmissionService;
 
+    private final ZraService zraService;
+
     @GetMapping
     @PreAuthorize("hasAuthority('" + PermissionConstants.ZRA_VIEW + "')")
-    public List<ZraSubmissionResponse> getAllSubmissions() {
-        return zraSubmissionService.getAllSubmissions();
+    public List<ZraSubmissionResponse> getAllSubmissions(
+            @RequestParam(value = "status", required = false) String status
+    ) {
+        return status != null
+                ? zraSubmissionService.getSubmissionsByStatus(status)
+                : zraSubmissionService.getAllSubmissions();
     }
 
     @GetMapping("/{id}")
@@ -29,5 +35,12 @@ public class ZraSubmissionController {
             @PathVariable Long id
     ) {
         return zraSubmissionService.getSubmissionById(id);
+    }
+
+    /** Resets a failed submission and transmits it immediately. */
+    @PostMapping("/{id}/retry")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.ZRA_MANAGE + "')")
+    public ZraSubmissionResponse retry(@PathVariable Long id) {
+        return zraService.retry(id);
     }
 }

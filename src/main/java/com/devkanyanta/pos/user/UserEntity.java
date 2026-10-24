@@ -47,5 +47,6 @@ public class UserEntity extends BaseEntity {
         joinColumns = @JoinColumn(name = "user_id"),
         inverseJoinColumns = @JoinColumn(name = "role_id")
     )
+    @lombok.Builder.Default
     private Set<RoleEntity> roles = new HashSet<>();
 }

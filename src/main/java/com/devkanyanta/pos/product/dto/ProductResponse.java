@@ -1,6 +1,7 @@
 package com.devkanyanta.pos.product.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 import lombok.Builder;
 import lombok.Getter;
@@ -32,4 +33,30 @@ public class ProductResponse {
     private Long categoryId;
 
     private String categoryName;
+
+    private Integer reorderLevel;
+
+    /** True when stock is at or below the reorder level (dashboard low-stock flag). */
+    private Boolean lowStock;
+
+    private String zraTaxType;
+
+    private String zraItemCode;
+
+    private String zraItemClassCode;
+
+    private String zraItemTypeCode;
+
+    private String zraOriginCountryCode;
+
+    private String zraPackagingUnitCode;
+
+    private String zraQuantityUnitCode;
+
+    /** All ZRA fields required for a Smart Invoice are present. */
+    private Boolean zraMapped;
+
+    private Boolean zraRegistered;
+
+    private LocalDateTime updatedAt;
 }

@@ -19,7 +19,13 @@ public class SaleItemResponse {
 
     private BigDecimal unitPrice;
 
+    private BigDecimal grossAmount;
+
     private BigDecimal lineTotal;
+
+    private BigDecimal saleDiscountShare;
+
+    private BigDecimal taxableAmount;
 
     private BigDecimal vatRate;
 
@@ -27,7 +33,13 @@ public class SaleItemResponse {
 
     private BigDecimal discountAmount;
 
+    private BigDecimal totalAmount;
+
+    private String zraTaxType;
+
     private String itemStatus;
 
     private Integer refundedQuantity;
+
+    private BigDecimal refundedAmount;
 }

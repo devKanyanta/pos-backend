@@ -23,7 +23,7 @@
 
 ## 2. Project Overview
 
-A backend REST API for a Point of Sale (POS) system serving Zambian retail businesses. Built with Spring Boot and MariaDB, the system handles user authentication & authorization, product/category management, sales transactions, payment processing, inventory tracking, customer management, receipt generation, and ZRA (Zambia Revenue Authority) Smart Invoice compliance.
+A backend REST API for a Point of Sale (POS) system serving Zambian retail businesses. Built with Spring Boot and PostgreSQL, the system handles user authentication & authorization, product/category management, sales transactions, payment processing, inventory tracking, customer management, receipt generation, and ZRA (Zambia Revenue Authority) Smart Invoice compliance.
 
 ---
 
@@ -36,7 +36,7 @@ A backend REST API for a Point of Sale (POS) system serving Zambian retail busin
 | Spring Data JPA | — | ORM / database access |
 | Spring Security | — | Authentication & authorization |
 | Spring Validation | — | Request validation |
-| MariaDB | 12 | Database |
+| PostgreSQL | 17+ | Database |
 | JWT (jjwt) | 0.11.5 | Token-based authentication |
 | Lombok | Latest | Boilerplate reduction |
 | Gradle | 9.4.1 | Build tool |

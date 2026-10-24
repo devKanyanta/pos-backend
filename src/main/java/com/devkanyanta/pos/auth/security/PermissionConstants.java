@@ -54,8 +54,32 @@ public final class PermissionConstants {
     // ZRA permissions
     public static final String ZRA_VIEW = "ZRA_VIEW";
 
+    public static final String ZRA_MANAGE = "ZRA_MANAGE";
+
     // Report permissions
     public static final String REPORT_VIEW = "REPORT_VIEW";
+
+    // Product catalogue import (CSV)
+    public static final String PRODUCT_IMPORT = "PRODUCT_IMPORT";
+
+    // Offline sync: register a device and push/pull data
+    public static final String SYNC_DEVICE = "SYNC_DEVICE";
+
+    // Manage registered devices and review offline-sync conflicts
+    public static final String DEVICE_MANAGE = "DEVICE_MANAGE";
+
+    // End-of-day reconciliation (cash-up)
+    public static final String RECONCILIATION_VIEW = "RECONCILIATION_VIEW";
+    public static final String RECONCILIATION_MANAGE = "RECONCILIATION_MANAGE";
+
+    // Merchant profile and plan
+    public static final String MERCHANT_MANAGE = "MERCHANT_MANAGE";
+
+    // Support guides (WhatsApp onboarding content)
+    public static final String SUPPORT_MANAGE = "SUPPORT_MANAGE";
+
+    // WhatsApp messaging (send receipts / reports through the provider)
+    public static final String WHATSAPP_SEND = "WHATSAPP_SEND";
 
     private PermissionConstants() {
     }
