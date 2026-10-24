@@ -51,6 +51,8 @@ public class ProductImportService {
 
     private final ProductRules productRules;
 
+    private final ProductBarcodeLookup barcodeLookup;
+
     private final StockLedger stockLedger;
 
     @Transactional
@@ -143,7 +145,7 @@ public class ProductImportService {
             existing = productRepository.findBySku(values.get("sku"));
         }
         if (existing.isEmpty() && values.get("barcode") != null) {
-            existing = productRepository.findByBarcode(values.get("barcode"));
+            existing = barcodeLookup.find(values.get("barcode"));
         }
 
         String categoryName = values.get("category");

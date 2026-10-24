@@ -1,8 +1,10 @@
 package com.devkanyanta.pos.shared.migration;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.sql.DataSource;
 
@@ -12,6 +14,8 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+
+import com.devkanyanta.pos.shared.util.Barcodes;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -58,6 +62,7 @@ public class SchemaMigrationRunner implements ApplicationRunner {
         for (Map.Entry<String, List<String>> migration : versionedMigrations().entrySet()) {
             applyOnce(migration.getKey(), migration.getValue());
         }
+        applyOnce("2026.10.06-normalise-product-barcodes", this::normaliseProductBarcodes);
     }
 
     private Map<String, List<String>> versionedMigrations() {
@@ -100,6 +105,61 @@ public class SchemaMigrationRunner implements ApplicationRunner {
 
     private void applyOnce(String version, List<String> statements) {
 
+        applyOnce(version, () -> {
+            for (String sql : statements) {
+                int rows = jdbc.update(sql);
+                log.debug("Migration {}: '{}' updated {} rows", version, sql, rows);
+            }
+        });
+    }
+
+    /**
+     * Brings barcodes saved before validation existed into the canonical form (trimmed, upper-case,
+     * blank -> NULL) so lookups by scanned value match them. Nothing is ever deleted: a value that
+     * is not a valid barcode, or whose canonical form is already used by another product, is left
+     * exactly as it is and reported in the log for a person to fix.
+     */
+    private void normaliseProductBarcodes() {
+
+        Map<Long, String> stored = new LinkedHashMap<>();
+        jdbc.query("SELECT id, barcode FROM products WHERE barcode IS NOT NULL ORDER BY id",
+                rs -> {
+                    stored.put(rs.getLong("id"), rs.getString("barcode"));
+                });
+
+        Set<String> taken = new HashSet<>(stored.values());
+        int updated = 0;
+
+        for (Map.Entry<Long, String> entry : stored.entrySet()) {
+            String current = entry.getValue();
+            String canonical = Barcodes.canonical(current);
+
+            if (current.equals(canonical)) {
+                continue;
+            }
+            if (canonical == null) {
+                jdbc.update("UPDATE products SET barcode = NULL WHERE id = ?", entry.getKey());
+                taken.remove(current);
+                updated++;
+            } else if (!Barcodes.isValid(canonical)) {
+                log.warn("Product {} has barcode '{}' which is not a valid barcode; left unchanged. Please correct it.",
+                        entry.getKey(), current);
+            } else if (taken.contains(canonical)) {
+                log.warn("Product {} barcode '{}' duplicates another product once normalised ('{}'); left unchanged. "
+                        + "Please resolve the duplicate.", entry.getKey(), current, canonical);
+            } else {
+                jdbc.update("UPDATE products SET barcode = ? WHERE id = ?", canonical, entry.getKey());
+                taken.remove(current);
+                taken.add(canonical);
+                updated++;
+            }
+        }
+
+        log.info("Normalised {} product barcode(s)", updated);
+    }
+
+    private void applyOnce(String version, Runnable migration) {
+
         Integer applied = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM schema_migrations WHERE version = ?", Integer.class, version);
 
@@ -107,10 +167,7 @@ public class SchemaMigrationRunner implements ApplicationRunner {
             return;
         }
 
-        for (String sql : statements) {
-            int rows = jdbc.update(sql);
-            log.debug("Migration {}: '{}' updated {} rows", version, sql, rows);
-        }
+        migration.run();
 
         jdbc.update("INSERT INTO schema_migrations (version) VALUES (?)", version);
         log.info("Applied schema migration {}", version);

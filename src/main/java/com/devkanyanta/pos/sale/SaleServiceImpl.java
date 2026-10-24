@@ -22,6 +22,7 @@ import com.devkanyanta.pos.inventory.StockLedger;
 import com.devkanyanta.pos.merchant.MerchantProfileService;
 import com.devkanyanta.pos.payment.PaymentService;
 import com.devkanyanta.pos.payment.dto.CreatePaymentRequest;
+import com.devkanyanta.pos.product.ProductBarcodeLookup;
 import com.devkanyanta.pos.product.ProductEntity;
 import com.devkanyanta.pos.product.ProductRepository;
 import com.devkanyanta.pos.sale.SaleEntity.PaymentStatus;
@@ -35,6 +36,7 @@ import com.devkanyanta.pos.sale.refund.SaleRefundService;
 import com.devkanyanta.pos.shared.config.PosProperties;
 import com.devkanyanta.pos.shared.exception.BadRequestException;
 import com.devkanyanta.pos.shared.exception.NotFoundException;
+import com.devkanyanta.pos.shared.util.Barcodes;
 import com.devkanyanta.pos.shared.util.Money;
 import com.devkanyanta.pos.shared.util.Texts;
 import com.devkanyanta.pos.zra.ZraTaxType;
@@ -57,6 +59,8 @@ public class SaleServiceImpl implements SaleService {
     private static final BigDecimal TOTAL_TOLERANCE = new BigDecimal("0.01");
 
     private final SaleRepository saleRepository;
+
+    private final ProductBarcodeLookup barcodeLookup;
 
     private final ProductRepository productRepository;
 
@@ -121,13 +125,14 @@ public class SaleServiceImpl implements SaleService {
 
         List<DraftItem> items = new ArrayList<>();
         for (SaleItemRequest item : request.getItems()) {
-            if (item == null || item.getProductId() == null) {
-                throw new BadRequestException("Each sale item needs a productId");
+            if (item == null) {
+                throw new BadRequestException("Each sale item needs a productId or barcode");
             }
+            Long productId = resolveProductId(item);
             if (item.getQuantity() == null || item.getQuantity() <= 0) {
                 throw new BadRequestException("Item quantity must be positive");
             }
-            items.add(new DraftItem(item.getProductId(), item.getQuantity(), item.getDiscountAmount(),
+            items.add(new DraftItem(productId, item.getQuantity(), item.getDiscountAmount(),
                     null, null, null, null));
         }
 
@@ -145,6 +150,28 @@ public class SaleServiceImpl implements SaleService {
         );
 
         return saleMapper.toResponse(createFromDraft(draft, username, false).sale());
+    }
+
+    /** The product id for a sale line, resolving a barcode on the server when one is given. */
+    private Long resolveProductId(SaleItemRequest item) {
+
+        String barcode = Barcodes.canonical(item.getBarcode());
+
+        if (barcode == null) {
+            if (item.getProductId() == null) {
+                throw new BadRequestException("Each sale item needs a productId or barcode");
+            }
+            return item.getProductId();
+        }
+
+        ProductEntity product = barcodeLookup.find(barcode)
+                .orElseThrow(() -> new NotFoundException("No product found for barcode " + barcode));
+
+        if (item.getProductId() != null && !item.getProductId().equals(product.getId())) {
+            throw new BadRequestException("Barcode " + barcode + " does not belong to product " + item.getProductId());
+        }
+
+        return product.getId();
     }
 
     /**

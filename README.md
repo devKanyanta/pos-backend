@@ -25,6 +25,9 @@ reconciliation, and WhatsApp receipt sharing.
 - **Sales and payments** – multi-line sales with discounts, VAT per line, split tenders, change
   for cash, mobile-money reference capture (duplicate references rejected), voids and
   full/partial refunds.
+- **Barcodes** – optional unique barcode per product (normalised, validated, unique index), fast lookup at
+  `GET /products/by-barcode`, and sales that can ring items up by `barcode`. See
+  [docs/api-documentation.md](docs/api-documentation.md#barcodes); the mobile app is in `../kantemba`.
 - **Receipts** – numbered receipts with plain-text (thermal printer), PDF and WhatsApp output.
 - **Catalogue and stock** – products, categories, barcodes/SKUs, reorder levels, a full inventory
   movement ledger (sales, restocks, adjustments, returns), low-stock alerts and CSV bulk import.
@@ -324,6 +327,8 @@ stand-in for the ZRA VSDC, so they never touch your development data or the real
 | `OfflineSyncIntegrationTest` | Device registration, offline upload, idempotency, conflicts |
 | `ReconciliationIntegrationTest` | Cash-up, Z-report |
 | `SecurityPlanSupportIntegrationTest` | Authorization, plan restrictions, support/WhatsApp |
+| `BarcodeIntegrationTest` | Barcode create/update, duplicates, lookup, sales by barcode, atomic checkout, idempotency, permissions, data migration |
+| `BarcodesTest` | Barcode normalisation and validation rules |
 | `PosApplicationTests` | Application context loads |
 
 ## Project layout

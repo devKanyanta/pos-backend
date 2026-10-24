@@ -79,7 +79,10 @@ public class PaymentServiceImpl implements PaymentService {
             throw new BadRequestException("Payment method is required");
         }
 
-        if (request.getAmount() == null || request.getAmount().signum() <= 0) {
+        // An omitted amount means "settle whatever is still owed", so clients need not compute totals.
+        boolean settleBalance = request.getAmount() == null;
+
+        if (!settleBalance && request.getAmount().signum() <= 0) {
             throw new BadRequestException("Payment amount must be positive");
         }
 
@@ -93,9 +96,9 @@ public class PaymentServiceImpl implements PaymentService {
             conflicts.add(CONFLICT_INACTIVE_METHOD);
         }
 
-        BigDecimal amount = Money.of(request.getAmount());
         BigDecimal alreadyPaid = paidAmount(sale.getId());
         BigDecimal remaining = Money.of(sale.getTotalAmount()).subtract(alreadyPaid);
+        BigDecimal amount = settleBalance ? remaining : Money.of(request.getAmount());
 
         if (remaining.signum() <= 0) {
             if (!offline) {

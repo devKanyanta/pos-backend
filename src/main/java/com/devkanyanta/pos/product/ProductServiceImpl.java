@@ -14,8 +14,10 @@ import com.devkanyanta.pos.product.dto.UpdateProductRequest;
 import com.devkanyanta.pos.product.mapper.ProductMapper;
 import com.devkanyanta.pos.sale.SaleItemRepository;
 import com.devkanyanta.pos.shared.config.PosProperties;
+import com.devkanyanta.pos.shared.exception.BadRequestException;
 import com.devkanyanta.pos.shared.exception.NotFoundException;
 import com.devkanyanta.pos.shared.security.CurrentUser;
+import com.devkanyanta.pos.shared.util.Barcodes;
 
 import lombok.RequiredArgsConstructor;
 
@@ -36,6 +38,8 @@ public class ProductServiceImpl implements ProductService {
     private final InventoryMovementRepository inventoryMovementRepository;
 
     private final PosProperties properties;
+
+    private final ProductBarcodeLookup barcodeLookup;
 
     @Override
     @Transactional
@@ -72,6 +76,19 @@ public class ProductServiceImpl implements ProductService {
     public ProductResponse getProductById(Long id) {
 
         return productMapper.toResponse(findProductById(id));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ProductResponse getProductByBarcode(String barcode) {
+
+        if (Barcodes.canonical(barcode) == null) {
+            throw new BadRequestException("Barcode is required");
+        }
+
+        return barcodeLookup.find(barcode)
+                .map(productMapper::toResponse)
+                .orElseThrow(() -> new NotFoundException("No product found for barcode " + Barcodes.canonical(barcode)));
     }
 
     @Override

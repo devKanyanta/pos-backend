@@ -13,7 +13,8 @@ public class CreatePaymentRequest {
 
     /**
      * Amount received. For cash this may exceed the amount due; the difference is returned as
-     * change. For other tenders it may not exceed the balance due.
+     * change. For other tenders it may not exceed the balance due. When omitted, the payment
+     * settles the remaining balance of the sale (calculated by the server).
      */
     private BigDecimal amount;
 

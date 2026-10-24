@@ -104,6 +104,18 @@ public class ProductController {
                 .body(IMPORT_TEMPLATE);
     }
 
+    /**
+     * Looks a product up by its scanned or typed barcode, so clients (checkout, product form) need
+     * not download the catalogue. Inactive products are returned too (check {@code active}).
+     */
+    @GetMapping("/by-barcode")
+    @PreAuthorize("hasAuthority('" + PermissionConstants.PRODUCT_VIEW + "')")
+    public ProductResponse getProductByBarcode(
+            @RequestParam("barcode") String barcode
+    ) {
+        return productService.getProductByBarcode(barcode);
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('" + PermissionConstants.PRODUCT_VIEW + "')")
     public ProductResponse getProductById(

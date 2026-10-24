@@ -12,6 +12,7 @@ import com.devkanyanta.pos.shared.config.PosProperties;
 import com.devkanyanta.pos.shared.exception.BadRequestException;
 import com.devkanyanta.pos.shared.exception.ConflictException;
 import com.devkanyanta.pos.shared.exception.NotFoundException;
+import com.devkanyanta.pos.shared.util.Barcodes;
 import com.devkanyanta.pos.shared.util.Texts;
 import com.devkanyanta.pos.zra.ZraTaxType;
 
@@ -30,6 +31,8 @@ public class ProductRules {
     private final CategoryRepository categoryRepository;
 
     private final PosProperties properties;
+
+    private final ProductBarcodeLookup barcodeLookup;
 
     /** Builds a new (unsaved) product from a create request, validating every field. */
     public ProductEntity buildNew(CreateProductRequest request) {
@@ -58,7 +61,7 @@ public class ProductRules {
 
         validateReorderLevel(request.getReorderLevel());
 
-        String barcode = Texts.clean(request.getBarcode());
+        String barcode = Barcodes.normalize(request.getBarcode());
         String sku = Texts.clean(request.getSku());
         String zraItemCode = Texts.clean(request.getZraItemCode());
         validateUniqueFields(barcode, sku, zraItemCode, null);
@@ -112,7 +115,7 @@ public class ProductRules {
             product.setName(name);
         }
 
-        String barcode = request.getBarcode() != null ? Texts.clean(request.getBarcode()) : null;
+        String barcode = request.getBarcode() != null ? Barcodes.normalize(request.getBarcode()) : null;
         String sku = request.getSku() != null ? Texts.clean(request.getSku()) : null;
         String zraItemCode = request.getZraItemCode() != null ? Texts.clean(request.getZraItemCode()) : null;
         validateUniqueFields(barcode, sku, zraItemCode, product.getId());
@@ -299,11 +302,10 @@ public class ProductRules {
     private void validateUniqueFields(String barcode, String sku, String zraItemCode, Long productId) {
 
         if (barcode != null) {
-            productRepository.findByBarcode(barcode)
-                    .filter(existing -> !existing.getId().equals(productId))
-                    .ifPresent(existing -> {
-                        throw new ConflictException("Product barcode already exists");
-                    });
+            barcodeLookup.findConflicting(barcode, productId).ifPresent(existing -> {
+                throw new ConflictException("Product barcode already exists: " + barcode
+                        + " is assigned to '" + existing.getName() + "' (id " + existing.getId() + ")");
+            });
         }
 
         if (sku != null) {

@@ -14,6 +14,9 @@ public interface ProductService {
 
     ProductResponse getProductById(Long id);
 
+    /** Finds the product (active or not) carrying this barcode; 404 when none does. */
+    ProductResponse getProductByBarcode(String barcode);
+
     ProductResponse updateProduct(Long id, UpdateProductRequest request);
 
     void deleteProduct(Long id);

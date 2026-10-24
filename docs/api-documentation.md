@@ -7,7 +7,7 @@ REST API for the POS backend (Spring Boot). All endpoints are JSON unless stated
 - [Error format](#error-format)
 - [Endpoints](#endpoints)
   - [Health](#health) · [Auth](#auth) · [Users](#users) · [Branches](#branches) · [Merchant profile](#merchant-profile)
-  - [Categories](#categories) · [Products](#products) · [Inventory movements](#inventory-movements)
+  - [Categories](#categories) · [Products](#products) · [Barcodes](#barcodes) · [Inventory movements](#inventory-movements)
   - [Customers](#customers) · [Payment methods](#payment-methods)
   - [Sales](#sales) · [Payments](#payments) · [Receipts](#receipts)
   - [Dashboard](#dashboard) · [Reports & Z-report](#reports--z-report) · [Reconciliations](#reconciliations)
@@ -74,7 +74,7 @@ Errors share one JSON shape:
 | 400 | Validation/business rule failure, malformed JSON, missing or invalid parameter, bad file part |
 | 401 | Wrong username/password, or authentication failed |
 | 403 | Missing permission, plan restriction, or no/invalid token on a protected route |
-| 404 | Resource not found, or no endpoint matches the path |
+| 404 | Resource not found (e.g. `No product found for barcode …`), or no endpoint matches the path |
 | 405 | HTTP method not supported on the path |
 | 409 | Duplicate value, record still in use, reused transaction reference, concurrent modification |
 | 413 | Uploaded file too large |
@@ -201,6 +201,7 @@ Response: `AuthResponse` (as above). Errors: `400` missing fields, `401` invalid
 | `POST /api/v1/products` | `PRODUCT_CREATE` | Create → `201` |
 | `GET /api/v1/products` | `PRODUCT_VIEW` | List |
 | `GET /api/v1/products/{id}` | `PRODUCT_VIEW` | Get |
+| `GET /api/v1/products/by-barcode?barcode=` | `PRODUCT_VIEW` | Find a product by its barcode – see [Barcodes](#barcodes) |
 | `PUT /api/v1/products/{id}` | `PRODUCT_UPDATE` | Update |
 | `DELETE /api/v1/products/{id}` | `PRODUCT_DELETE` | Delete → `204` |
 | `GET /api/v1/products/low-stock` | `PRODUCT_VIEW` | Products at or below their reorder level |
@@ -211,7 +212,8 @@ Response: `AuthResponse` (as above). Errors: `400` missing fields, `401` invalid
 
 | Field | Type | Notes |
 |---|---|---|
-| `name`, `barcode`, `sku` | string | |
+| `name`, `sku` | string | |
+| `barcode` | string | optional, unique, normalised and validated – see [Barcodes](#barcodes). On update: omit to keep, `""` to clear |
 | `price` | decimal | VAT-exclusive selling price |
 | `costPrice` | decimal | |
 | `stockQuantity` | integer | |
@@ -251,6 +253,70 @@ Response – `ProductImportResult`:
 Row `status`: `CREATED`, `UPDATED`, `WOULD_CREATE`, `WOULD_UPDATE`, `FAILED`. `line` is 1-based with the header as line 1.
 
 ---
+
+### Barcodes
+
+Barcodes belong to the **product** (one barcode identifies one product; a product has at most one). They are
+optional: products without a barcode keep working and can be sold by `productId`.
+
+**Normalisation and validation** (applied wherever a barcode is saved – create, update, CSV import):
+
+| Rule | Detail |
+|---|---|
+| Cleaning | Surrounding whitespace is trimmed and letters are upper-cased (`" abc-1 "` → `ABC-1`) |
+| Blank | An empty or whitespace-only value means "no barcode" (stored as `null`); on update it clears the barcode |
+| Allowed | 3–64 characters from `A–Z 0–9 . _ / + -`, no spaces. Covers EAN-13, EAN-8, UPC-A, UPC-E, ITF-14 and Code 128 shop labels |
+| Check digits | **Not** enforced – shops print their own internal codes |
+| Spreadsheet damage | Values like `6.00123E+12` (a long number mangled by a spreadsheet) are rejected with a message to format the column as text |
+| Uniqueness | Enforced by the application (clear 409 naming the other product) **and** by a unique database index, so concurrent requests cannot create duplicates. Inactive products still own their barcode |
+| UPC-A / EAN-13 | A 12-digit UPC-A and the 13-digit EAN with a leading `0` are the same product: lookups find either form and creating the other form is a duplicate (409) |
+
+Invalid value → `400`:
+```json
+{ "status": 400, "error": "Bad Request", "message": "Invalid barcode '12 34'. Use 3-64 letters, digits or . _ / + - (no spaces).", "path": "/api/v1/products" }
+```
+Already assigned → `409`:
+```json
+{ "status": 409, "error": "Conflict", "message": "Product barcode already exists: 6001234567890 is assigned to 'Fresh Milk 1L' (id 12)", "path": "/api/v1/products" }
+```
+
+#### `GET /api/v1/products/by-barcode?barcode={code}`
+Permission: `PRODUCT_VIEW` (ADMIN, MANAGER and CASHIER). Returns the [ProductResponse](#products) for the barcode,
+served by the unique index on `products.barcode` – clients do not need to download the catalogue to scan.
+
+- The value is trimmed and case-insensitive. It is passed as a query parameter (not a path segment) because valid
+  barcodes may contain `/` and `.`.
+- **Inactive products are returned** (`"active": false`) so the product form can tell the user who owns the barcode.
+  Checkout must check `active`; selling an inactive product is refused by `POST /sales`.
+- Reading is lenient: legacy values that would no longer pass validation can still be found.
+
+| Status | When |
+|---|---|
+| 200 | Found. Body is the product, including current `price`, `vatRate`, `stockQuantity`, `trackInventory`, `active` |
+| 400 | `barcode` missing or blank |
+| 401/403 | No/invalid token, or the user lacks `PRODUCT_VIEW` |
+| 404 | `{"message": "No product found for barcode 0000000000000", ...}` |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8081/api/v1/products/by-barcode?barcode=6001234567890"
+```
+
+Who may do what with barcodes:
+
+| Action | Permission | Default roles |
+|---|---|---|
+| Look up a product by barcode, sell by barcode | `PRODUCT_VIEW`, `SALE_CREATE` | ADMIN, MANAGER, CASHIER |
+| Create a product / set its barcode | `PRODUCT_CREATE` | ADMIN, MANAGER* |
+| Change or clear a barcode | `PRODUCT_UPDATE` | ADMIN, MANAGER |
+| Add stock to the product a scan found | `INVENTORY_ADJUST` | ADMIN, MANAGER |
+
+\* The default MANAGER role has `PRODUCT_CREATE`; CASHIER does not (a create returns `403`).
+
+**Database / migration.** No new table or column: `products.barcode` (nullable, unique index) already existed. Migration
+`2026.10.06-normalise-product-barcodes` runs once at startup (tracked in `schema_migrations`) and brings existing rows into
+the canonical form. It never deletes data: blank values become `NULL`; a value that is not a valid barcode, or that would
+collide with another product once normalised, is left untouched and logged as a warning for a person to fix.
+Products without a barcode are unaffected.
 
 ### Inventory movements
 
@@ -319,12 +385,35 @@ Row `status`: `CREATED`, `UPDATED`, `WOULD_CREATE`, `WOULD_UPDATE`, `FAILED`. `l
 | `customerId` | long | optional |
 | `notes` | string | |
 | `discountAmount` | decimal | sale-level discount |
-| `items[]` | array | **required, at least one** – `{ productId, quantity (>0), discountAmount }` |
+| `items[]` | array | **required, at least one** – `{ productId \| barcode, quantity (>0), discountAmount }`. Send `productId`, `barcode`, or both (they must be the same product) |
 | `clientSaleId` | string | optional idempotency key, 8–64 chars (`letters digits . _ : -`). Re-sending returns the existing sale |
 | `deviceId` | string | optional capturing device |
 | `payments[]` | array | optional tenders recorded atomically with the sale (split payments allowed) – see [Payments](#payments) for fields |
 
-Fails with `400` for inactive products, insufficient stock for tracked items, etc.
+Fails with `400` for inactive products, insufficient stock for tracked items, a line with neither `productId` nor `barcode`,
+a `barcode` that does not belong to the given `productId`, and non-positive quantities; with `404` for an unknown barcode
+(`No product found for barcode …`).
+
+**Server-side calculation and atomicity.** Prices, VAT, discounts and the total are always calculated by the server from
+the current product data; the client never supplies a total. The sale, its stock deductions and its payments are one
+database transaction – if any part fails (e.g. a mobile-money payment without its code) nothing is saved and no stock is
+deducted. Product rows are locked while stock is checked and deducted, so concurrent sales cannot oversell.
+
+**Duplicate submissions.** Send a `clientSaleId` (8–64 chars) and reuse it when retrying: a repeat returns the sale that
+was already recorded (`201`, same `id`) and does not deduct stock again. Truly concurrent duplicates are serialised by the
+product locks and the unique `client_sale_id` index – at most one sale is created; the others return the same sale or `409`.
+
+**Checkout in one call (recommended for barcode scanning).** Omit `amount` from a payment to settle the server-calculated
+balance:
+```json
+{
+  "clientSaleId": "k-m2x9f3-9a1c5e77b2d04f18",
+  "items":    [ { "barcode": "6001234567890", "quantity": 2 }, { "productId": 4, "barcode": "6009876543210", "quantity": 1 } ],
+  "payments": [ { "paymentMethodId": 1 } ]
+}
+```
+Response: the full `SaleResponse` with `totalAmount`, `amountPaid`, `balanceDue`, `paymentStatus: "PAID"`, `receiptNumber`.
+For cash, send `amount` (the amount handed over) to get `changeGiven`.
 
 Example:
 ```json
@@ -365,7 +454,7 @@ Body optional. Fields:
 | Field | Notes |
 |---|---|
 | `paymentMethodId` | **required**, method must be active |
-| `amount` | **required**, positive. For cash it may exceed the amount due (the difference is returned as change); for other tenders it may not exceed the balance due |
+| `amount` | optional. When omitted the payment settles the remaining balance the server calculated. When sent it must be positive; for cash it may exceed the amount due (the difference is returned as change), for other tenders it may not exceed the balance due |
 | `transactionReference` | required for mobile money (3–64 chars: letters, digits, `. - _ / #`); a reference already used on the same method returns `409` |
 | `payerPhone` | optional mobile-money payer number |
 
@@ -636,6 +725,43 @@ The merchant plan (`GET /api/v1/merchant`) gates features. A restricted call ret
 | `reconciliation` | no | yes | Reconciliations and Z-report endpoints |
 
 Available on every plan: sales, payments, receipts, products, categories, customers, offline sync, `GET /reports/today`, dashboard.
+
+---
+
+## Running migrations and testing barcode support
+
+**Migrations** run automatically at application start (`SchemaMigrationRunner`); there is nothing to run by hand. After
+upgrading, check the log for `Applied schema migration 2026.10.06-normalise-product-barcodes` and any warnings about
+barcodes that need fixing. To inspect what was left unchanged:
+
+```sql
+SELECT id, name, barcode FROM products WHERE barcode IS NOT NULL AND barcode <> upper(btrim(barcode));
+```
+
+**Backend tests** (PostgreSQL must be installed; they use the separate `posdb_test` database):
+```bash
+cd pos-backend
+./gradlew test --tests '*BarcodesTest' --tests '*BarcodeIntegrationTest'   # barcode feature only
+./gradlew test                                                             # everything
+```
+`BarcodeIntegrationTest` covers: create/update with a barcode, products without one, duplicate (409) and invalid (400)
+barcodes including UPC-A/EAN-13 equivalence, lookup (found, case/whitespace, unknown, blank, inactive), sales by barcode
+with server-calculated totals and stock deduction, unknown barcode / wrong id / zero or negative quantity / oversell /
+inactive product, atomic checkout rollback, repeated and concurrent duplicate submissions, role permissions, and the data
+migration.
+
+**Manual check with curl:**
+```bash
+TOKEN=$(curl -s -X POST localhost:8081/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -s -H "Authorization: Bearer $TOKEN" "localhost:8081/api/v1/products/by-barcode?barcode=6001234567890"
+curl -s -X POST localhost:8081/api/v1/sales -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"items":[{"barcode":"6001234567890","quantity":1}],"payments":[{"paymentMethodId":1}]}'
+```
+(The `admin` login exists when the [demo data](../README.md#demo-data) is loaded.)
+
+**Mobile app** (`kantemba/`): `flutter analyze` and `flutter test` (unit tests for the scan flow, checkout request and
+barcode rules; widget tests that drive the checkout and product screens against a fake server).
 
 ---
 

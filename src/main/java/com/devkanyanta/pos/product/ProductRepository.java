@@ -1,6 +1,7 @@
 package com.devkanyanta.pos.product;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,6 +16,9 @@ public interface ProductRepository
         extends JpaRepository<ProductEntity, Long> {
 
     Optional<ProductEntity> findByBarcode(String barcode);
+
+    /** Barcode lookup (served by the unique index on barcode); several values cover UPC-A/EAN-13 forms. */
+    List<ProductEntity> findByBarcodeIn(Collection<String> barcodes);
 
     Optional<ProductEntity> findBySku(String sku);
 
